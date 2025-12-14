@@ -1,151 +1,145 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import requests
+import datetime
 
-# --- 1. 頁面設定 ---
-st.set_page_config(
-    page_title="精選持股追蹤",
-    page_icon="📈",
-    layout="wide"
-)
+class MarketPanicDetector:
+    def __init__(self, ticker='00675L.TW'):
+        self.ticker = ticker
+        self.stock_data = None
+        self.vix_data = None
+        self.fng_score = None
+        
+        # 設定參數
+        self.rsi_threshold = 25       # RSI 超賣標準
+        self.vix_threshold = 20       # VIX 恐慌標準
+        self.fng_threshold = 25       # Fear & Greed 恐慌標準
+        self.vol_multiplier = 1.5     # 爆量標準：大於 20MA 的幾倍
 
-# --- 2. CSS 樣式修正 (修復深色模式看不見字的問題) ---
-st.markdown("""
-    <style>
-    /* 針對指標卡片 (Metric Card) 的容器設定 */
-    div[data-testid="stMetric"] {
-        background-color: #f0f2f6; /* 淺灰色背景 */
-        border: 1px solid #d6d6d6; /* 增加細邊框讓邊界更清楚 */
-        padding: 15px;
-        border-radius: 10px;
-        color: black; /* 預設文字黑色 */
-    }
+    def fetch_data(self):
+        """抓取數據"""
+        print(f"📥 正在抓取 {self.ticker} 與 VIX 數據...")
+        try:
+            stock = yf.Ticker(self.ticker)
+            self.stock_data = stock.history(period="6mo")
+            
+            vix = yf.Ticker("^VIX")
+            vix_df = vix.history(period="5d")
+            if not vix_df.empty:
+                self.vix_data = vix_df['Close'].iloc[-1]
+            else:
+                self.vix_data = 0
+        except Exception as e:
+            print(f"❌ 數據抓取失敗: {e}")
 
-    /* 強制修改標題 (Label) 顏色 - 例如 "目前股價" */
-    div[data-testid="stMetricLabel"] p {
-        color: #555555 !important; /* 深灰色 */
-    }
+    def fetch_fear_and_greed(self):
+        """爬取 CNN Fear & Greed Index"""
+        print("📥 正在連線 CNN 抓取貪婪恐慌指數...")
+        url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                self.fng_score = round(data['fear_and_greed']['score'])
+            else:
+                self.fng_score = None
+        except:
+            self.fng_score = None
 
-    /* 強制修改數值 (Value) 顏色 - 例如 "1480.00" */
-    div[data-testid="stMetricValue"] div {
-        color: #000000 !important; /* 純黑色 */
-    }
-    
-    /* 說明：漲跌幅 (Delta) 的紅綠色 Streamlit 會自動處理，不用強制設定，以免失去顏色 */
-    </style>
-    """, unsafe_allow_html=True)
+    def calculate_technicals(self):
+        """計算技術指標"""
+        if self.stock_data is None or self.stock_data.empty:
+            return
 
-# --- 3. 設定寫死的股票清單 ---
-STOCKS = {
-    "2330.TW": "台積電 (2330)",
-    "0050.TW": "元大台灣50 (0050)",
-    "00757.TW": "統一FANG+ (00757)",
-    "00675L.TW": "富邦臺灣加權正2 (00675L)"
-}
+        df = self.stock_data.copy()
+        
+        # 1. 布林通道
+        df['MA20'] = df['Close'].rolling(window=20).mean()
+        df['STD'] = df['Close'].rolling(window=20).std()
+        df['Upper'] = df['MA20'] + (df['STD'] * 2)
+        df['Lower'] = df['MA20'] - (df['STD'] * 2)
 
-# --- 4. 側邊欄：控制區 ---
-with st.sidebar:
-    st.title("⚙️ 股票設定")
-    
-    selected_ticker = st.selectbox(
-        "選擇股票",
-        options=list(STOCKS.keys()),
-        format_func=lambda x: STOCKS[x]
-    )
-    
-    st.markdown("---")
-    
-    time_period = st.radio(
-        "觀察週期",
-        options=["1mo", "3mo", "6mo", "1y", "ytd"],
-        index=2, # 預設 6個月
-        format_func=lambda x: {
-            "1mo": "近 1 月", "3mo": "近 3 月", 
-            "6mo": "近 6 月", "1y": "近 1 年", "ytd": "今年以來"
-        }[x]
-    )
-    
-    st.info(f"目前檢視：**{STOCKS[selected_ticker]}**")
+        # 2. 成交量均線
+        df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
 
-# --- 5. 資料獲取函數 ---
-@st.cache_data(ttl=300)
-def get_stock_data(ticker, period):
-    try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period=period)
-        info = stock.info
-        return df, info
-    except Exception as e:
-        st.error(f"資料讀取錯誤: {e}")
-        return None, None
+        # 3. RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
 
-# --- 6. 主程式邏輯 ---
-df, info = get_stock_data(selected_ticker, time_period)
+        self.stock_data = df
 
-if df is not None and not df.empty:
-    latest_price = df['Close'].iloc[-1]
-    prev_price = df['Close'].iloc[-2]
-    change = latest_price - prev_price
-    pct_change = (change / prev_price) * 100
+    def analyze(self):
+        """輸出結果 (已修正為張數)"""
+        if self.stock_data is None:
+            return
 
-    # === 區塊 A: 頭部資訊看板 ===
-    st.title(f"{STOCKS[selected_ticker]} 走勢看板")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            label="目前股價",
-            value=f"{latest_price:.2f}",
-            delta=f"{change:.2f} ({pct_change:.2f}%)"
-        )
-    with col2:
-        st.metric(label="開盤價", value=f"{df['Open'].iloc[-1]:.2f}")
-    with col3:
-        st.metric(label="最高價", value=f"{df['High'].iloc[-1]:.2f}")
-    with col4:
-        st.metric(label="最低價", value=f"{df['Low'].iloc[-1]:.2f}")
+        today = self.stock_data.iloc[-1]
+        date_str = today.name.strftime('%Y-%m-%d')
+        
+        # --- 單位換算 (股 -> 張) ---
+        # yfinance 台股 Volume 通常是股數，除以 1000 換算成張
+        vol_today_sheets = int(today['Volume'] / 1000)
+        vol_ma_sheets = int(today['Vol_MA20'] / 1000)
+        
+        # 條件判斷
+        cond_lower_band = today['Close'] < today['Lower']
+        cond_volume = today['Volume'] > (today['Vol_MA20'] * self.vol_multiplier)
+        cond_rsi = today['RSI'] < self.rsi_threshold
+        cond_vix = self.vix_data > self.vix_threshold if self.vix_data else False
+        cond_fng = self.fng_score < self.fng_threshold if self.fng_score else False
 
-    # === 區塊 B: 圖表與數據 ===
-    st.markdown("---") # 分隔線
-    tab1, tab2 = st.tabs(["📊 K線走勢圖", "📄 詳細歷史數據"])
+        # --- 顯示報告 ---
+        print("\n" + "="*40)
+        print(f"📊 恐慌指標檢測報告 | 標的: {self.ticker}")
+        print(f"📅 資料日期: {date_str}")
+        print("="*40)
 
-    with tab1:
-        fig = go.Figure(data=[go.Candlestick(
-            x=df.index,
-            open=df['Open'],
-            high=df['High'],
-            low=df['Low'],
-            close=df['Close'],
-            name="股價"
-        )])
+        print(f"1. [技術面] 價格 vs 布林下緣:")
+        print(f"   收盤價 {today['Close']:.2f} | 下軌 {today['Lower']:.2f}")
+        print(f"   判定: {'🔴 跌破下軌 (符合)' if cond_lower_band else '🟢 未跌破'}")
+        
+        print(f"\n2. [籌碼面] 成交量 (單位: 張):")
+        print(f"   今日量: {vol_today_sheets:,} 張")
+        print(f"   20日均量: {vol_ma_sheets:,} 張")
+        print(f"   判定: {'🔴 爆量恐慌殺盤 (符合)' if cond_volume else '🟢 量能正常'}")
 
-        # 添加 MA20
-        if len(df) > 20:
-            ma20 = df['Close'].rolling(window=20).mean()
-            fig.add_trace(go.Scatter(x=df.index, y=ma20, mode='lines', name='MA20 (月線)', line=dict(color='orange', width=1.5)))
+        print(f"\n3. [動能面] RSI 指標:")
+        print(f"   數值 {today['RSI']:.2f}")
+        print(f"   判定: {'🔴 嚴重超賣 (符合)' if cond_rsi else '🟢 尚未超賣'}")
 
-        fig.update_layout(
-            title=f"{STOCKS[selected_ticker]} - {time_period} K線圖",
-            yaxis_title="價格 (TWD)",
-            xaxis_rangeslider_visible=False,
-            height=500,
-            template="plotly_white", # 強制圖表背景為白色，避免深色模式影響閱讀
-            margin=dict(l=20, r=20, t=50, b=20)
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        print(f"\n4. [避險面] VIX 恐慌指數:")
+        print(f"   數值 {self.vix_data:.2f}")
+        print(f"   判定: {'🔴 市場恐慌 (符合)' if cond_vix else '🟢 市場平穩'}")
 
-    with tab2:
-        st.subheader("歷史交易數據")
-        display_df = df.sort_index(ascending=False).copy()
-        display_df.index = display_df.index.strftime('%Y-%m-%d')
-        st.dataframe(
-            display_df[['Open', 'High', 'Low', 'Close', 'Volume']],
-            use_container_width=True,
-            height=400
-        )
+        print(f"\n5. [情緒面] Fear & Greed Index:")
+        if self.fng_score:
+            print(f"   數值 {self.fng_score}")
+            print(f"   判定: {'🔴 極度恐慌 (符合)' if cond_fng else '🟢 情緒尚可'}")
+        else:
+            print("   ⚠️ 無法取得數據")
 
-else:
-    st.warning("無法取得資料，請檢查股票代碼或網路連線。")
+        # --- 總結 ---
+        print("-" * 40)
+        score = sum([cond_lower_band, cond_volume, cond_rsi, cond_vix, cond_fng])
+        print(f"🎯 恐慌訊號總分: {score} / 5")
+        
+        if score >= 4:
+            print("🚨 訊號極強！市場極度非理性，00675L 可考慮分批進場搶反彈。")
+        elif score >= 3:
+            print("⚠️ 訊號中等，建議觀察盤中是否有「下影線」再動作。")
+        else:
+            print("☕ 目前尚未出現明顯的過度恐慌訊號，建議觀望。")
+        print("="*40)
+
+if __name__ == "__main__":
+    bot = MarketPanicDetector('00675L.TW')
+    bot.fetch_data()
+    bot.fetch_fear_and_greed()
+    bot.calculate_technicals()
+    bot.analyze()
