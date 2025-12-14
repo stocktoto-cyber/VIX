@@ -8,22 +8,36 @@ from datetime import datetime, timedelta
 st.set_page_config(
     page_title="精選持股追蹤",
     page_icon="📈",
-    layout="wide" # 使用寬版面讓圖表更清楚
+    layout="wide"
 )
 
-# 自定義 CSS 來優化指標顯示 (讓字體更大更清楚)
+# --- 2. CSS 樣式修正 (修復深色模式看不見字的問題) ---
 st.markdown("""
     <style>
-    .stMetric {
-        background-color: #f0f2f6;
+    /* 針對指標卡片 (Metric Card) 的容器設定 */
+    div[data-testid="stMetric"] {
+        background-color: #f0f2f6; /* 淺灰色背景 */
+        border: 1px solid #d6d6d6; /* 增加細邊框讓邊界更清楚 */
         padding: 15px;
         border-radius: 10px;
+        color: black; /* 預設文字黑色 */
     }
+
+    /* 強制修改標題 (Label) 顏色 - 例如 "目前股價" */
+    div[data-testid="stMetricLabel"] p {
+        color: #555555 !important; /* 深灰色 */
+    }
+
+    /* 強制修改數值 (Value) 顏色 - 例如 "1480.00" */
+    div[data-testid="stMetricValue"] div {
+        color: #000000 !important; /* 純黑色 */
+    }
+    
+    /* 說明：漲跌幅 (Delta) 的紅綠色 Streamlit 會自動處理，不用強制設定，以免失去顏色 */
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 設定寫死的股票清單 ---
-# 字典格式：代號 -> 名稱
+# --- 3. 設定寫死的股票清單 ---
 STOCKS = {
     "2330.TW": "台積電 (2330)",
     "0050.TW": "元大台灣50 (0050)",
@@ -31,11 +45,10 @@ STOCKS = {
     "00675L.TW": "富邦臺灣加權正2 (00675L)"
 }
 
-# --- 3. 側邊欄：控制區 ---
+# --- 4. 側邊欄：控制區 ---
 with st.sidebar:
     st.title("⚙️ 股票設定")
     
-    # 下拉選單 (顯示名稱，回傳代號)
     selected_ticker = st.selectbox(
         "選擇股票",
         options=list(STOCKS.keys()),
@@ -44,7 +57,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # 時間範圍選擇
     time_period = st.radio(
         "觀察週期",
         options=["1mo", "3mo", "6mo", "1y", "ytd"],
@@ -57,27 +69,22 @@ with st.sidebar:
     
     st.info(f"目前檢視：**{STOCKS[selected_ticker]}**")
 
-# --- 4. 資料獲取函數 (快取以加速) ---
-@st.cache_data(ttl=300) # 每5分鐘更新一次
+# --- 5. 資料獲取函數 ---
+@st.cache_data(ttl=300)
 def get_stock_data(ticker, period):
     try:
         stock = yf.Ticker(ticker)
-        # 抓取歷史資料
         df = stock.history(period=period)
-        # 抓取即時資訊 (用於顯示最新價格)
         info = stock.info
         return df, info
     except Exception as e:
         st.error(f"資料讀取錯誤: {e}")
         return None, None
 
-# --- 5. 主程式邏輯 ---
-
-# 獲取資料
+# --- 6. 主程式邏輯 ---
 df, info = get_stock_data(selected_ticker, time_period)
 
 if df is not None and not df.empty:
-    # 取得最新一筆與前一筆資料計算漲跌
     latest_price = df['Close'].iloc[-1]
     prev_price = df['Close'].iloc[-2]
     change = latest_price - prev_price
@@ -86,7 +93,6 @@ if df is not None and not df.empty:
     # === 區塊 A: 頭部資訊看板 ===
     st.title(f"{STOCKS[selected_ticker]} 走勢看板")
     
-    # 使用 Columns 排版讓資訊橫向排列
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
@@ -102,11 +108,11 @@ if df is not None and not df.empty:
     with col4:
         st.metric(label="最低價", value=f"{df['Low'].iloc[-1]:.2f}")
 
-    # === 區塊 B: 圖表與數據 (使用 Tabs 分頁) ===
+    # === 區塊 B: 圖表與數據 ===
+    st.markdown("---") # 分隔線
     tab1, tab2 = st.tabs(["📊 K線走勢圖", "📄 詳細歷史數據"])
 
     with tab1:
-        # 繪製 Plotly 互動式 K 線圖
         fig = go.Figure(data=[go.Candlestick(
             x=df.index,
             open=df['Open'],
@@ -116,8 +122,7 @@ if df is not None and not df.empty:
             name="股價"
         )])
 
-        # 添加移動平均線 (簡單範例：20日均線)
-        # 如果資料夠多才畫
+        # 添加 MA20
         if len(df) > 20:
             ma20 = df['Close'].rolling(window=20).mean()
             fig.add_trace(go.Scatter(x=df.index, y=ma20, mode='lines', name='MA20 (月線)', line=dict(color='orange', width=1.5)))
@@ -125,16 +130,15 @@ if df is not None and not df.empty:
         fig.update_layout(
             title=f"{STOCKS[selected_ticker]} - {time_period} K線圖",
             yaxis_title="價格 (TWD)",
-            xaxis_rangeslider_visible=False, # 隱藏底部的滑桿讓畫面更清爽
+            xaxis_rangeslider_visible=False,
             height=500,
-            template="plotly_white",
+            template="plotly_white", # 強制圖表背景為白色，避免深色模式影響閱讀
             margin=dict(l=20, r=20, t=50, b=20)
         )
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
         st.subheader("歷史交易數據")
-        # 把 Index (Date) 變成一個欄位並格式化
         display_df = df.sort_index(ascending=False).copy()
         display_df.index = display_df.index.strftime('%Y-%m-%d')
         st.dataframe(
