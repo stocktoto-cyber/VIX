@@ -7,42 +7,39 @@ import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
 
-# --- 2. CSS 樣式修正 (關鍵修復) ---
-# 這段 CSS 會強制覆蓋 Streamlit 的預設設定，解決「白底白字」問題
+# --- 2. CSS 樣式修正 (針對您的需求調整顏色) ---
 st.markdown("""
     <style>
-    /* 針對指標卡片 (Metric Card) 的外框設定 */
+    /* 1. 指標卡片 (Metric Card) 的背景與邊框 */
     div[data-testid="stMetric"] {
-        background-color: #f0f2f6 !important; /* 強制淺灰背景 */
+        background-color: #f0f2f6 !important; /* 維持淺灰底色 */
         border: 1px solid #d6d6d6;
         padding: 15px;
         border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1); /* 加一點陰影讓它更立體 */
+        box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
     }
 
-    /* 強制修改標題文字顏色 (例如：收盤價、RSI) */
+    /* 2. 標題文字 (Label) - 如：收盤價、布林下軌 */
     div[data-testid="stMetricLabel"] p {
-        color: #555555 !important; /* 深灰色 */
+        color: #666666 !important; /* === 改成灰色 === */
         font-weight: bold;
+        font-size: 14px;
     }
-    
-    /* 針對某些版本的 Streamlit Label 結構不同，多加一層保險 */
+    /* 雙重保險，針對不同層級結構 */
     div[data-testid="stMetricLabel"] {
-        color: #555555 !important;
+        color: #666666 !important;
     }
 
-    /* 強制修改數值文字顏色 (例如：138.00) */
+    /* 3. 數值文字 (Value) - 如：138.00 */
     div[data-testid="stMetricValue"] div {
-        color: #000000 !important; /* 純黑色 */
+        color: #333333 !important; /* === 改成深灰色 (比標題深，閱讀更清楚) === */
         font-weight: bold;
     }
-    
-    /* 針對數值結構多加一層保險 */
     div[data-testid="stMetricValue"] {
-        color: #000000 !important;
+        color: #333333 !important;
     }
 
-    /* 狀態提示框 (Success/Error) 的文字顏色調整 */
+    /* 4. 狀態提示框 (Success/Error) 文字加粗 */
     .stAlert {
         font-weight: bold;
     }
@@ -154,7 +151,7 @@ class MarketPanicDetector:
         c1.metric("收盤價", f"{today['Close']:.2f}")
         c2.metric("布林下軌", f"{today['Lower']:.2f}")
         with c3:
-            st.markdown("<br>", unsafe_allow_html=True) # 排版微調
+            st.markdown("<br>", unsafe_allow_html=True)
             if cond_lower_band:
                 st.error("🔴 跌破下軌 (符合)")
             else:
@@ -188,7 +185,7 @@ class MarketPanicDetector:
         c1, c2 = st.columns(2)
         
         with c1:
-            st.info("VIX 恐慌指數") # 使用 info 框代替純文字
+            st.info("VIX 恐慌指數")
             st.metric("VIX 指數", f"{self.vix_data:.2f}")
             if cond_vix:
                 st.error("🔴 市場恐慌 (符合)")
@@ -225,18 +222,11 @@ with st.sidebar:
     st.header("⚙️ 設定")
     st.write("輸入台股代號 (如 2330.TW, 00675L.TW)")
     
-    # 輸入框
     ticker_input = st.text_input("股票代碼", value="00675L.TW")
-    
-    # 按鈕
     run_btn = st.button("🚀 開始分析", type="primary")
 
-# 當頁面載入或按下按鈕時執行
 if run_btn or ticker_input:
-    # 建立物件
     detector = MarketPanicDetector(ticker_input)
-    
-    # 執行流程
     with st.spinner('⏳ 正在抓取資料與計算中...'):
         success = detector.fetch_data()
         if success:
