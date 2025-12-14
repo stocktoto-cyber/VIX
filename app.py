@@ -7,123 +7,110 @@ import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
 
-# --- 2. CSS 樣式修正 (iOS 深灰背景版) ---
+# --- 2. CSS 樣式修正 (Neumorphism / Soft UI 風格) ---
 st.markdown("""
     <style>
-    /* === 全域設定：背景改為深灰色 === */
+    /* === 全域設定：柔和的米灰色背景 === */
     .stApp {
-        background-color: #2C2C2E !important; /* iOS Dark System Gray */
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+        background-color: #F0F0F3 !important; /* 經典 Soft UI 背景色 */
+        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
     }
 
-    /* 側邊欄背景：稍微深一點，做出層次感 */
-    section[data-testid="stSidebar"] {
-        background-color: #1C1C1E !important; /* iOS Background Black */
-        border-right: 1px solid #3A3A3C;
-    }
-
-    /* 側邊欄與主畫面的純文字顏色 (標題、說明) 改為白色，不然會被深色背景吃掉 */
+    /* 強制修改全域文字顏色為深灰色 */
     h1, h2, h3, p, span, label, .stMarkdown {
-        color: #FFFFFF !important;
-    }
-    
-    /* 特別修正：讓卡片內的文字維持黑色/灰色 (不然會被上面的全域設定變白) */
-    div[data-testid="stMetric"] label, 
-    div[data-testid="stMetric"] p, 
-    div[data-testid="stMetric"] div {
-        color: initial !important; /* 重置為卡片原本設定 */
+        color: #444444 !important; /* 深灰色主字體 */
     }
 
-    /* === 指標卡片 (Metric Card) === */
-    /* 維持白色卡片，創造懸浮感與高對比 */
+    /* 側邊欄背景：稍微深一點點，維持整體感 */
+    section[data-testid="stSidebar"] {
+        background-color: #EAEAED !important;
+        box-shadow: inset -5px 0 10px rgba(0,0,0,0.02) !important;
+    }
+
+    /* === 指標卡片 (Metric Card) - 核心擬態效果 === */
     div[data-testid="stMetric"] {
-        background-color: #FFFFFF !important; /* 純白卡片 */
+        background-color: #F0F0F3 !important; /* 與背景同色 */
         border: none !important;
         padding: 20px !important;
         border-radius: 20px !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.3) !important; /* 陰影加深，讓卡片浮起來 */
+        /* 關鍵：擬態陰影 (左上亮白，右下深灰) */
+        box-shadow: 
+            10px 10px 20px #aeaec0, 
+            -10px -10px 20px #ffffff !important;
     }
 
-    /* 卡片內標題 (Label) - iOS 副標題灰 */
+    /* 卡片內標題 (Label) - 淺灰色 */
     div[data-testid="stMetricLabel"] * {
-        color: #8E8E93 !important;
+        color: #7D7D7D !important; /* 較淺的灰色 */
         font-size: 14px !important;
         font-weight: 600 !important;
     }
     div[data-testid="stMetricLabel"] {
-        color: #8E8E93 !important;
+        color: #7D7D7D !important;
     }
 
-    /* 卡片內數值 (Value) - iOS 標題黑 */
+    /* 卡片內數值 (Value) - 深灰色 (您指定的要求) */
     div[data-testid="stMetricValue"] * {
-        color: #1C1C1E !important; /* 純黑字 */
+        color: #333333 !important; /* 深鐵灰，接近黑色但更柔和 */
         font-size: 28px !important;
         font-weight: 700 !important;
     }
     div[data-testid="stMetricValue"] {
-        color: #1C1C1E !important;
+        color: #333333 !important;
     }
 
-    /* === 按鈕 (Button) === */
+    /* === 按鈕 (Button) - 參考圖片的橘黃色 === */
     div[data-testid="stButton"] button {
-        background-color: #0A84FF !important; /* iOS Dark Mode Blue (比較亮一點) */
+        background: linear-gradient(145deg, #FFB74D, #FF9800) !important; /* 橘色漸層 */
         color: white !important;
-        border-radius: 12px !important;
+        border-radius: 30px !important; /* 更圓潤 */
         border: none !important;
-        padding: 10px 20px !important;
+        padding: 12px 25px !important;
         font-weight: 600 !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2) !important;
+        box-shadow: 5px 5px 10px #d1d1d1, -5px -5px 10px #ffffff !important; /* 按鈕也有立體感 */
+        transition: all 0.2s ease;
         width: 100%;
     }
     div[data-testid="stButton"] button:hover {
-        background-color: #007AFF !important;
-        transform: scale(0.98);
+        transform: translateY(-2px); /* 懸浮效果 */
+        box-shadow: 6px 6px 12px #c1c1c1, -6px -6px 12px #ffffff !important;
+    }
+    div[data-testid="stButton"] button:active {
+        transform: translateY(0px);
+        box-shadow: inset 4px 4px 8px #d98200, inset -4px -4px 8px #ffd06b !important; /* 按下凹陷感 */
     }
 
-    /* === 輸入框 (Text Input) === */
+    /* === 輸入框 (Text Input) - 凹陷效果 === */
     div[data-testid="stTextInput"] input {
-        border-radius: 12px !important;
-        background-color: #3A3A3C !important; /* 深灰色輸入框 */
-        color: #FFFFFF !important; /* 輸入文字變白 */
-        border: 1px solid #48484A !important;
+        background-color: #F0F0F3 !important;
+        border-radius: 15px !important;
+        border: none !important;
+        color: #333333 !important;
+        /* 內部陰影，創造凹陷感 */
+        box-shadow: inset 5px 5px 10px #d1d1d1, inset -5px -5px 10px #ffffff !important;
         padding: 10px 15px !important;
     }
-    /* 輸入框標題 */
     div[data-testid="stTextInput"] label {
-        color: #FFFFFF !important;
+        color: #555555 !important;
+        font-weight: bold;
     }
 
-    /* === 狀態提示框 (Alerts) === */
-    /* 成功 (Green) */
+    /* === 狀態提示框 (Alerts) - 柔化 === */
+    .stAlert {
+        border-radius: 15px !important;
+        box-shadow: 5px 5px 10px #dedede, -5px -5px 10px #ffffff !important;
+        border: none !important;
+    }
     div[data-testid="stNotification"][class*="success"] {
-        background-color: #D1E7DD !important; /* 保持淺色底讓文字清楚 */
-        color: #0f5132 !important;
-        border-radius: 16px !important;
-        border: none !important;
+        background-color: #E8F5E9 !important;
+        color: #2E7D32 !important;
     }
-    /* 錯誤 (Red) */
     div[data-testid="stNotification"][class*="error"] {
-        background-color: #F8D7DA !important;
-        color: #842029 !important;
-        border-radius: 16px !important;
-        border: none !important;
-    }
-    /* 警告 (Yellow) */
-    div[data-testid="stNotification"][class*="warning"] {
-        background-color: #FFF3CD !important;
-        color: #664d03 !important;
-        border-radius: 16px !important;
-        border: none !important;
-    }
-    /* 一般 (Info) */
-    div[data-testid="stNotification"][class*="info"] {
-        background-color: #CFF4FC !important;
-        color: #055160 !important;
-        border-radius: 16px !important;
-        border: none !important;
+        background-color: #FFEBEE !important;
+        color: #C62828 !important;
     }
 
-    /* 修正 Streamlit 箭頭顏色 */
+    /* 修正箭頭顏色 */
     div[data-testid="stMetricDelta"] svg {
         fill: auto !important;
     }
@@ -146,11 +133,9 @@ class MarketPanicDetector:
     def fetch_data(self):
         """抓取數據"""
         try:
-            # 抓取個股
             stock = yf.Ticker(self.ticker)
             self.stock_data = stock.history(period="6mo")
             
-            # 抓取 VIX
             vix = yf.Ticker("^VIX")
             vix_df = vix.history(period="5d")
             if not vix_df.empty:
@@ -186,16 +171,16 @@ class MarketPanicDetector:
 
         df = self.stock_data.copy()
         
-        # 1. 布林通道
+        # 布林通道
         df['MA20'] = df['Close'].rolling(window=20).mean()
         df['STD'] = df['Close'].rolling(window=20).std()
         df['Upper'] = df['MA20'] + (df['STD'] * 2)
         df['Lower'] = df['MA20'] - (df['STD'] * 2)
 
-        # 2. 成交量均線
+        # 成交量均線
         df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
 
-        # 3. RSI
+        # RSI
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -213,20 +198,18 @@ class MarketPanicDetector:
         today = self.stock_data.iloc[-1]
         date_str = today.name.strftime('%Y-%m-%d')
         
-        # --- 單位換算 (股 -> 張) ---
         vol_today_sheets = int(today['Volume'] / 1000)
         vol_ma_sheets = int(today['Vol_MA20'] / 1000)
         
-        # 條件判斷
         cond_lower_band = today['Close'] < today['Lower']
         cond_volume = today['Volume'] > (today['Vol_MA20'] * self.vol_multiplier)
         cond_rsi = today['RSI'] < self.rsi_threshold
         cond_vix = self.vix_data > self.vix_threshold if self.vix_data else False
         cond_fng = self.fng_score < self.fng_threshold if self.fng_score else False
 
-        # --- 顯示報告 (標題顏色改為白色) ---
-        st.markdown(f"<h1 style='color:white;'>📊 恐慌指標檢測 | {self.ticker}</h1>", unsafe_allow_html=True)
-        st.markdown(f"<p style='color:#AEAEB2;'>📅 資料日期: {date_str}</p>", unsafe_allow_html=True)
+        # --- 顯示報告 (標題顏色深灰) ---
+        st.markdown(f"<h1 style='color:#333333;'>📊 恐慌指標檢測 | {self.ticker}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color:#666666;'>📅 資料日期: {date_str}</p>", unsafe_allow_html=True)
         st.markdown("---")
 
         # 1. 技術面
@@ -291,8 +274,7 @@ class MarketPanicDetector:
         st.markdown("---")
         score = sum([cond_lower_band, cond_volume, cond_rsi, cond_vix, cond_fng])
         
-        # 標題顏色改為白色
-        st.markdown(f"<h3 style='color:white; font-weight:700;'>🎯 恐慌訊號總分: {score} / 5</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:#333333; font-weight:700;'>🎯 恐慌訊號總分: {score} / 5</h3>", unsafe_allow_html=True)
         
         if score >= 4:
             st.error("🚨 訊號極強！市場極度非理性，可考慮分批進場搶反彈。")
@@ -304,7 +286,7 @@ class MarketPanicDetector:
 
 # --- Streamlit 執行邏輯 ---
 with st.sidebar:
-    st.markdown("<h2 style='color:white;'>⚙️ 設定</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#333333;'>⚙️ 設定</h2>", unsafe_allow_html=True)
     st.write("輸入台股代號 (如 2330.TW, 00675L.TW)")
     
     ticker_input = st.text_input("股票代碼", value="00675L.TW")
