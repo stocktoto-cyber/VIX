@@ -4,28 +4,59 @@ import pandas as pd
 import requests
 import datetime
 
-# --- 頁面設定 ---
+# --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
 
-# --- CSS 優化 (讓字體更清楚) ---
+# --- 2. CSS 樣式修正 (關鍵修復) ---
+# 這段 CSS 會強制覆蓋 Streamlit 的預設設定，解決「白底白字」問題
 st.markdown("""
     <style>
-    .stMetric {
-        background-color: #f0f2f6;
-        padding: 10px;
-        border-radius: 5px;
+    /* 針對指標卡片 (Metric Card) 的外框設定 */
+    div[data-testid="stMetric"] {
+        background-color: #f0f2f6 !important; /* 強制淺灰背景 */
+        border: 1px solid #d6d6d6;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.1); /* 加一點陰影讓它更立體 */
+    }
+
+    /* 強制修改標題文字顏色 (例如：收盤價、RSI) */
+    div[data-testid="stMetricLabel"] p {
+        color: #555555 !important; /* 深灰色 */
+        font-weight: bold;
+    }
+    
+    /* 針對某些版本的 Streamlit Label 結構不同，多加一層保險 */
+    div[data-testid="stMetricLabel"] {
+        color: #555555 !important;
+    }
+
+    /* 強制修改數值文字顏色 (例如：138.00) */
+    div[data-testid="stMetricValue"] div {
+        color: #000000 !important; /* 純黑色 */
+        font-weight: bold;
+    }
+    
+    /* 針對數值結構多加一層保險 */
+    div[data-testid="stMetricValue"] {
+        color: #000000 !important;
+    }
+
+    /* 狀態提示框 (Success/Error) 的文字顏色調整 */
+    .stAlert {
+        font-weight: bold;
     }
     </style>
     """, unsafe_allow_html=True)
 
 class MarketPanicDetector:
     def __init__(self, ticker='00675L.TW'):
-        self.ticker = ticker.upper() # 自動轉大寫
+        self.ticker = ticker.upper()
         self.stock_data = None
         self.vix_data = None
         self.fng_score = None
         
-        # 設定參數 (維持原設定)
+        # 設定參數
         self.rsi_threshold = 25       
         self.vix_threshold = 20       
         self.fng_threshold = 25       
@@ -123,6 +154,7 @@ class MarketPanicDetector:
         c1.metric("收盤價", f"{today['Close']:.2f}")
         c2.metric("布林下軌", f"{today['Lower']:.2f}")
         with c3:
+            st.markdown("<br>", unsafe_allow_html=True) # 排版微調
             if cond_lower_band:
                 st.error("🔴 跌破下軌 (符合)")
             else:
@@ -134,6 +166,7 @@ class MarketPanicDetector:
         c1.metric("今日量", f"{vol_today_sheets:,}")
         c2.metric("20日均量", f"{vol_ma_sheets:,}")
         with c3:
+            st.markdown("<br>", unsafe_allow_html=True)
             if cond_volume:
                 st.error("🔴 爆量恐慌殺盤 (符合)")
             else:
@@ -144,27 +177,28 @@ class MarketPanicDetector:
         c1, c2 = st.columns([2, 1])
         c1.metric("RSI (14)", f"{today['RSI']:.2f}")
         with c2:
+            st.markdown("<br>", unsafe_allow_html=True)
             if cond_rsi:
                 st.error("🔴 嚴重超賣 (符合)")
             else:
                 st.success("🟢 尚未超賣")
 
-        # 4. 避險面 & 情緒面 (放在一起)
+        # 4. 市場恐慌程度
         st.subheader("4. 市場恐慌程度")
         c1, c2 = st.columns(2)
         
         with c1:
-            st.markdown("**VIX 恐慌指數**")
-            st.write(f"數值: {self.vix_data:.2f}")
+            st.info("VIX 恐慌指數") # 使用 info 框代替純文字
+            st.metric("VIX 指數", f"{self.vix_data:.2f}")
             if cond_vix:
                 st.error("🔴 市場恐慌 (符合)")
             else:
                 st.success("🟢 市場平穩")
                 
         with c2:
-            st.markdown("**Fear & Greed Index**")
+            st.info("Fear & Greed Index")
             if self.fng_score:
-                st.write(f"數值: {self.fng_score}")
+                st.metric("貪婪恐慌指數", f"{self.fng_score}")
                 if cond_fng:
                     st.error("🔴 極度恐慌 (符合)")
                 else:
@@ -189,17 +223,21 @@ class MarketPanicDetector:
 # --- Streamlit 執行邏輯 ---
 with st.sidebar:
     st.header("⚙️ 設定")
-    # 輸入框：預設為 00675L.TW
-    ticker_input = st.text_input("輸入股票代碼", value="00675L.TW")
-    run_btn = st.button("開始分析", type="primary")
+    st.write("輸入台股代號 (如 2330.TW, 00675L.TW)")
+    
+    # 輸入框
+    ticker_input = st.text_input("股票代碼", value="00675L.TW")
+    
+    # 按鈕
+    run_btn = st.button("🚀 開始分析", type="primary")
 
-# 當使用者按下按鈕，或是剛進入頁面時執行
+# 當頁面載入或按下按鈕時執行
 if run_btn or ticker_input:
     # 建立物件
     detector = MarketPanicDetector(ticker_input)
     
-    # 執行流程 (加上 Loading 動畫)
-    with st.spinner('正在分析數據中...'):
+    # 執行流程
+    with st.spinner('⏳ 正在抓取資料與計算中...'):
         success = detector.fetch_data()
         if success:
             detector.fetch_fear_and_greed()
