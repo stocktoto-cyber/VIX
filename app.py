@@ -7,39 +7,45 @@ import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
 
-# --- 2. CSS 樣式修正 (針對您的需求調整顏色) ---
+# --- 2. CSS 樣式修正 (核彈級修復) ---
 st.markdown("""
     <style>
-    /* 1. 指標卡片 (Metric Card) 的背景與邊框 */
+    /* 1. 卡片容器：強制淺灰底色 */
     div[data-testid="stMetric"] {
-        background-color: #f0f2f6 !important; /* 維持淺灰底色 */
+        background-color: #f0f2f6 !important;
         border: 1px solid #d6d6d6;
         padding: 15px;
         border-radius: 10px;
         box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
     }
 
-    /* 2. 標題文字 (Label) - 如：收盤價、布林下軌 */
-    div[data-testid="stMetricLabel"] p {
-        color: #666666 !important; /* === 改成灰色 === */
+    /* 2. 標題 (Label) - 鎖定所有子元素強制變灰 */
+    /* 包含 div, p, span 等所有可能的標籤 */
+    div[data-testid="stMetricLabel"] * {
+        color: #777777 !important; /* 灰色 */
         font-weight: bold;
-        font-size: 14px;
     }
-    /* 雙重保險，針對不同層級結構 */
+    /* 雙重保險：針對外層容器也設一次 */
     div[data-testid="stMetricLabel"] {
-        color: #666666 !important;
+        color: #777777 !important;
     }
 
-    /* 3. 數值文字 (Value) - 如：138.00 */
-    div[data-testid="stMetricValue"] div {
-        color: #333333 !important; /* === 改成深灰色 (比標題深，閱讀更清楚) === */
+    /* 3. 數值 (Value) - 鎖定所有子元素強制變黑 */
+    div[data-testid="stMetricValue"] * {
+        color: #000000 !important; /* 純黑色 */
         font-weight: bold;
     }
+    /* 雙重保險 */
     div[data-testid="stMetricValue"] {
-        color: #333333 !important;
+        color: #000000 !important;
     }
 
-    /* 4. 狀態提示框 (Success/Error) 文字加粗 */
+    /* 4. 針對 Streamlit 在某些瀏覽器會產生的額外箭頭或符號 */
+    div[data-testid="stMetricDelta"] svg {
+        fill: auto !important; /* 讓漲跌箭頭維持紅綠色，不要變黑 */
+    }
+    
+    /* 5. 狀態提示框 (Success/Error) */
     .stAlert {
         font-weight: bold;
     }
