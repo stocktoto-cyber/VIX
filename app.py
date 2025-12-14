@@ -7,47 +7,102 @@ import datetime
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
 
-# --- 2. CSS 樣式修正 (核彈級修復) ---
+# --- 2. CSS 樣式修正 (iOS 風格化) ---
 st.markdown("""
     <style>
-    /* 1. 卡片容器：強制淺灰底色 */
+    /* === 全域設定：模擬 iOS 背景 === */
+    .stApp {
+        background-color: #F2F2F7 !important; /* iOS 系統淺灰背景 */
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+    }
+
+    /* === 指標卡片 (Metric Card) === */
     div[data-testid="stMetric"] {
-        background-color: #f0f2f6 !important;
-        border: 1px solid #d6d6d6;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+        background-color: #FFFFFF !important; /* 純白卡片 */
+        border: none !important; /* 去除邊框 */
+        padding: 20px !important;
+        border-radius: 20px !important; /* 大圓角 */
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05) !important; /* 柔和的 iOS 陰影 */
     }
 
-    /* 2. 標題 (Label) - 鎖定所有子元素強制變灰 */
-    /* 包含 div, p, span 等所有可能的標籤 */
+    /* 標題 (Label) - iOS 副標題灰 */
     div[data-testid="stMetricLabel"] * {
-        color: #777777 !important; /* 灰色 */
-        font-weight: bold;
+        color: #8E8E93 !important; /* iOS System Gray */
+        font-size: 14px !important;
+        font-weight: 600 !important;
     }
-    /* 雙重保險：針對外層容器也設一次 */
     div[data-testid="stMetricLabel"] {
-        color: #777777 !important;
+        color: #8E8E93 !important;
     }
 
-    /* 3. 數值 (Value) - 鎖定所有子元素強制變黑 */
+    /* 數值 (Value) - iOS 標題黑 */
     div[data-testid="stMetricValue"] * {
-        color: #000000 !important; /* 純黑色 */
-        font-weight: bold;
+        color: #1C1C1E !important; /* iOS System Black */
+        font-size: 28px !important; /* 加大數字 */
+        font-weight: 700 !important; /* San Francisco Bold */
     }
-    /* 雙重保險 */
     div[data-testid="stMetricValue"] {
-        color: #000000 !important;
+        color: #1C1C1E !important;
     }
 
-    /* 4. 針對 Streamlit 在某些瀏覽器會產生的額外箭頭或符號 */
-    div[data-testid="stMetricDelta"] svg {
-        fill: auto !important; /* 讓漲跌箭頭維持紅綠色，不要變黑 */
+    /* === 按鈕 (Button) === */
+    div[data-testid="stButton"] button {
+        background-color: #007AFF !important; /* iOS System Blue */
+        color: white !important;
+        border-radius: 12px !important; /* 按鈕圓角 */
+        border: none !important;
+        padding: 10px 20px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 2px 5px rgba(0,122,255,0.3) !important;
+        transition: all 0.2s ease;
+        width: 100%; /* 讓按鈕填滿寬度 */
+    }
+    div[data-testid="stButton"] button:hover {
+        background-color: #0062CC !important; /* 按下變深 */
+        transform: scale(0.98); /* 按下微縮效果 */
+    }
+
+    /* === 輸入框 (Text Input) === */
+    div[data-testid="stTextInput"] input {
+        border-radius: 12px !important;
+        background-color: #E5E5EA !important; /* iOS 輸入框背景灰 */
+        color: #000000 !important;
+        border: none !important;
+        padding: 10px 15px !important;
+    }
+    div[data-testid="stTextInput"] label {
+        color: #1C1C1E !important;
+        font-weight: 600 !important;
+    }
+
+    /* === 狀態提示框 (Alerts) === */
+    /* 成功 (Green) */
+    div[data-testid="stNotification"][class*="success"] {
+        background-color: #E8F5E9 !important; /* 淺綠底 */
+        color: #34C759 !important; /* iOS System Green */
+        border-radius: 16px !important;
+        border: none !important;
+    }
+    .stAlert {
+        border-radius: 16px !important;
+        padding: 15px !important;
     }
     
-    /* 5. 狀態提示框 (Success/Error) */
-    .stAlert {
-        font-weight: bold;
+    /* 錯誤/危險 (Red) */
+    div[data-testid="stNotification"][class*="error"] {
+        background-color: #FFEBEE !important;
+        color: #FF3B30 !important; /* iOS System Red */
+    }
+
+    /* 修正 Streamlit 箭頭顏色 */
+    div[data-testid="stMetricDelta"] svg {
+        fill: auto !important;
+    }
+
+    /* 隱藏側邊欄預設背景，改為半透明磨砂感 (盡力模擬) */
+    section[data-testid="stSidebar"] {
+        background-color: #FFFFFF !important;
+        border-right: 1px solid #E5E5EA;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -147,12 +202,12 @@ class MarketPanicDetector:
         cond_fng = self.fng_score < self.fng_threshold if self.fng_score else False
 
         # --- 顯示報告 ---
-        st.title(f"📊 恐慌指標檢測報告 | {self.ticker}")
+        st.markdown(f"<h1 style='color:#000000;'>📊 恐慌指標檢測 | {self.ticker}</h1>", unsafe_allow_html=True)
         st.caption(f"📅 資料日期: {date_str}")
         st.markdown("---")
 
         # 1. 技術面
-        st.subheader("1. [技術面] 價格 vs 布林下緣")
+        st.subheader("1. 價格 vs 布林下緣")
         c1, c2, c3 = st.columns(3)
         c1.metric("收盤價", f"{today['Close']:.2f}")
         c2.metric("布林下軌", f"{today['Lower']:.2f}")
@@ -164,19 +219,19 @@ class MarketPanicDetector:
                 st.success("🟢 未跌破")
 
         # 2. 籌碼面
-        st.subheader("2. [籌碼面] 成交量 (單位: 張)")
+        st.subheader("2. 成交量 (單位: 張)")
         c1, c2, c3 = st.columns(3)
         c1.metric("今日量", f"{vol_today_sheets:,}")
         c2.metric("20日均量", f"{vol_ma_sheets:,}")
         with c3:
             st.markdown("<br>", unsafe_allow_html=True)
             if cond_volume:
-                st.error("🔴 爆量恐慌殺盤 (符合)")
+                st.error("🔴 爆量恐慌 (符合)")
             else:
                 st.success("🟢 量能正常")
 
         # 3. 動能面
-        st.subheader("3. [動能面] RSI 指標")
+        st.subheader("3. RSI 指標")
         c1, c2 = st.columns([2, 1])
         c1.metric("RSI (14)", f"{today['RSI']:.2f}")
         with c2:
@@ -191,17 +246,17 @@ class MarketPanicDetector:
         c1, c2 = st.columns(2)
         
         with c1:
-            st.info("VIX 恐慌指數")
-            st.metric("VIX 指數", f"{self.vix_data:.2f}")
+            st.markdown("**VIX 恐慌指數**") # 標題稍微調整以配合 iOS 風格
+            st.metric("VIX", f"{self.vix_data:.2f}")
             if cond_vix:
                 st.error("🔴 市場恐慌 (符合)")
             else:
                 st.success("🟢 市場平穩")
                 
         with c2:
-            st.info("Fear & Greed Index")
+            st.markdown("**Fear & Greed Index**")
             if self.fng_score:
-                st.metric("貪婪恐慌指數", f"{self.fng_score}")
+                st.metric("F&G 指數", f"{self.fng_score}")
                 if cond_fng:
                     st.error("🔴 極度恐慌 (符合)")
                 else:
@@ -213,7 +268,8 @@ class MarketPanicDetector:
         st.markdown("---")
         score = sum([cond_lower_band, cond_volume, cond_rsi, cond_vix, cond_fng])
         
-        st.subheader(f"🎯 恐慌訊號總分: {score} / 5")
+        # 使用 markdown 製作 iOS 風格的大標題
+        st.markdown(f"<h3 style='color:#1C1C1E; font-weight:700;'>🎯 恐慌訊號總分: {score} / 5</h3>", unsafe_allow_html=True)
         
         if score >= 4:
             st.error("🚨 訊號極強！市場極度非理性，可考慮分批進場搶反彈。")
@@ -225,10 +281,12 @@ class MarketPanicDetector:
 
 # --- Streamlit 執行邏輯 ---
 with st.sidebar:
-    st.header("⚙️ 設定")
+    st.markdown("<h2 style='color:#1C1C1E;'>⚙️ 設定</h2>", unsafe_allow_html=True)
     st.write("輸入台股代號 (如 2330.TW, 00675L.TW)")
     
     ticker_input = st.text_input("股票代碼", value="00675L.TW")
+    
+    st.write("") # 空行
     run_btn = st.button("🚀 開始分析", type="primary")
 
 if run_btn or ticker_input:
