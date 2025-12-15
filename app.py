@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="恐慌指標檢測器 (彈性爆量版)", page_icon="🚨", layout="wide")
+st.set_page_config(page_title="恐慌指標檢測器 (黑底版)", page_icon="🚨", layout="wide")
 
 # --- 2. CSS 樣式 (黑底白字風格) ---
 st.markdown("""
@@ -49,6 +49,13 @@ st.markdown("""
     
     /* 表格 */
     div[data-testid="stDataFrame"] { background-color: #1E1E1E !important; }
+    
+    /* 狀態提示框 */
+    div[data-testid="stNotification"] {
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #555555 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -56,7 +63,7 @@ st.markdown("""
 class MarketPanicDetector:
     def __init__(self, ticker='00675L.TW', vol_multiplier=2.0):
         self.ticker = ticker.upper()
-        self.vol_multiplier = vol_multiplier # 動態倍數
+        self.vol_multiplier = vol_multiplier
         self.stock_data = None
         self.vix_data = None
         self.fng_score = None
@@ -97,7 +104,7 @@ class MarketPanicDetector:
         df['Upper'] = df['MA20'] + (df['STD'] * 2)
         df['Lower'] = df['MA20'] - (df['STD'] * 2)
         
-        # 計算 20日均量 (這是相對爆量的基準)
+        # 計算均量
         df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
         
         delta = df['Close'].diff()
@@ -144,7 +151,7 @@ class MarketPanicDetector:
 
             msg_box.info("🔄 正在計算策略...")
             
-            # 計算技術指標
+            # 計算指標
             df = self.calculate_technicals(df)
             
             # 切分區間
@@ -156,7 +163,6 @@ class MarketPanicDetector:
             positions = []
             
             # --- 診斷統計 ---
-            # 這裡改成「動態爆量」判定：成交量 > 均量 * 倍數
             df['Check_Vol'] = df['Volume'] > (df['Vol_MA20'] * self.vol_multiplier)
             df['Check_Price'] = df['Close'] < df['Lower']
             df['Check_VIX'] = df['VIX'] > 20
@@ -170,6 +176,7 @@ class MarketPanicDetector:
                 is_buy = today['Signal_Buy']
                 
                 # 賣出: 突破布林 + 相對爆量 + VIX<20
+                # (回測無歷史 F&G 數據，故此處僅用 VIX 模擬情緒)
                 is_sell = (today['Close'] > today['Upper']) and \
                           today['Check_Vol'] and \
                           (today['VIX'] < 20)
@@ -198,7 +205,6 @@ class MarketPanicDetector:
 
             msg_box.empty()
             
-            # 準備診斷數據 (取出最後一筆的均量做參考)
             last_vol_ma = df['Vol_MA20'].iloc[-1] if not df.empty else 0
             
             stats = {
@@ -226,20 +232,20 @@ class MarketPanicDetector:
         vol_today_sheets = int(today['Volume'] / 1000)
         vol_ma_sheets = int(today['Vol_MA20'] / 1000)
         
-        # 爆量門檻 = 均量 * 倍數
         target_vol = today['Vol_MA20'] * self.vol_multiplier
         target_vol_sheets = int(target_vol / 1000)
 
-        # 條件
+        # 買入條件
         buy_cond_price = today['Close'] < today['Lower']
         buy_cond_vol = today['Volume'] > target_vol
         buy_cond_vix = self.vix_data > 20
         buy_cond_fng = self.fng_score < 25 if self.fng_score else False
         
+        # 賣出條件 (F&G 門檻已修正為 > 60)
         sell_cond_price = today['Close'] > today['Upper']
         sell_cond_vol = today['Volume'] > target_vol
         sell_cond_vix = self.vix_data < 20
-        sell_cond_fng = self.fng_score > 25 if self.fng_score else False
+        sell_cond_fng = self.fng_score > 60 if self.fng_score else False # <--- 修改處
 
         buy_score = sum([buy_cond_price, buy_cond_vol, buy_cond_vix, buy_cond_fng])
         sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
@@ -250,7 +256,7 @@ class MarketPanicDetector:
         col1, col2, col3 = st.columns(3)
         col1.metric("收盤價", f"{today['Close']:.2f}")
         col2.metric("今日成交量", f"{vol_today_sheets:,} 張", delta=f"均量 {vol_ma_sheets:,}")
-        col3.metric("F&G 指數", f"{self.fng_score}", delta="<25為恐慌")
+        col3.metric("F&G 指數", f"{self.fng_score}", delta="<25恐慌 / >60貪婪")
         
         st.markdown("---")
         
@@ -269,7 +275,7 @@ class MarketPanicDetector:
             st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
-            st.write(f"4. F&G > 25: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
+            st.write(f"4. F&G > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}") # <--- 介面文字更新
 
 # --- 4. 主程式邏輯 ---
 
@@ -279,7 +285,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 💥 爆量定義")
-    # 新增滑桿：讓使用者決定「幾倍」才算爆量
     vol_multiplier = st.slider("成交量需大於均量的幾倍?", 1.0, 5.0, 2.0, 0.1)
     st.caption(f"設定 2.0 代表今日成交量必須是過去 20 日平均的 2 倍以上。")
     
@@ -330,7 +335,6 @@ if run_btn:
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("符合「跌破下軌」天數", f"{stats['count_price']} 天")
                     
-                    # 這裡改成顯示相對爆量的天數
                     last_vol_str = int(stats['last_vol_ma']/1000)
                     c2.metric(f"符合「>{vol_multiplier}倍爆量」天數", f"{stats['count_vol']} 天", help=f"近期均量約: {last_vol_str:,}張")
                     
