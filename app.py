@@ -251,7 +251,8 @@ class MarketPanicDetector:
         col2.metric("今日成交量", f"{vol_today_sheets:,} 張", delta=f"均量 {vol_ma_sheets:,}")
         
         fng_display = f"{final_fng}" if final_fng is not None else "N/A"
-        col3.metric(f"F&G 指數 ({source_label})", fng_display, delta="<25恐慌 / >60貪婪")
+        # 名稱修改處
+        col3.metric(f"恐懼與貪婪指數 ({source_label})", fng_display, delta="<25恐慌 / >60貪婪")
         
         st.markdown("---")
         
@@ -262,7 +263,8 @@ class MarketPanicDetector:
             st.write(f"1. 布林下緣: {'✅ 符合' if buy_cond_price else '❌ 未跌破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if buy_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX > 20: {'✅ 符合' if buy_cond_vix else '❌ 未達標'} ({self.vix_data:.2f})")
-            st.write(f"4. F&G < 25: {'✅ 符合' if buy_cond_fng else '❌ 未達標'}")
+            # 名稱修改處
+            st.write(f"4. 恐懼與貪婪指數 < 25: {'✅ 符合' if buy_cond_fng else '❌ 未達標'}")
 
         with c2:
             st.subheader(f"🔴 賣出訊號 ({sell_score}/4)")
@@ -270,7 +272,8 @@ class MarketPanicDetector:
             st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
-            st.write(f"4. F&G > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
+            # 名稱修改處
+            st.write(f"4. 恐懼與貪婪指數 > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
 
 # --- 4. 主程式邏輯 ---
 
@@ -283,7 +286,8 @@ with st.sidebar:
     vol_multiplier = st.slider("成交量需大於均量的幾倍?", 1.0, 5.0, 2.0, 0.1)
     
     st.markdown("---")
-    st.markdown("### 😨 F&G 指數 (手動備援)")
+    # 名稱修改處
+    st.markdown("### 😨 恐懼與貪婪指數 (手動備援)")
     st.info("若自動抓取顯示 None，請手動輸入目前指數。")
     manual_fng_input = st.number_input("手動輸入數值", min_value=0, max_value=100, value=50)
     
@@ -323,13 +327,8 @@ if run_btn:
                 m3.metric("平均報酬", f"{avg_return:.2f}%")
                 m4.metric("總報酬", f"{total_return:.2f}%")
                 
-                # --- 資料表欄位中文化 ---
                 display_df = trades_df.copy()
-                
-                # 格式化報酬率
                 display_df['return'] = display_df['return'].apply(lambda x: f"{x*100:.2f}%")
-                
-                # 修改欄位名稱
                 display_df.columns = [
                     "進場日期", "出場日期", "進場價格", "出場價格", 
                     "進場VIX", "出場VIX", "出場成交量", "報酬率", "持有天數"
