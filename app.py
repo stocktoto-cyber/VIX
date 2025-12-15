@@ -40,11 +40,15 @@ st.markdown("""
     }
     div[data-testid="stButton"] button p { color: white !important; }
 
-    /* 輸入框 */
+    /* 輸入框 & 下拉選單 */
     div[data-testid="stTextInput"] input, div[data-testid="stDateInput"] input, div[data-testid="stNumberInput"] input {
         background-color: #333333 !important;
         color: #FFFFFF !important;
         border: 1px solid #555555 !important;
+    }
+    div[data-testid="stSelectbox"] > div > div {
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
     }
     
     /* 表格 */
@@ -220,7 +224,7 @@ class MarketPanicDetector:
                         "entry_date": date,
                         "entry_price": today['Close'],
                         "entry_vix": today['VIX'],
-                        "entry_vol": today['Volume'] # 紀錄進場量
+                        "entry_vol": today['Volume']
                     })
                 elif is_sell and len(positions) > 0:
                     for pos in positions:
@@ -232,8 +236,8 @@ class MarketPanicDetector:
                             "exit_price": today['Close'],
                             "entry_vix": f"{pos['entry_vix']:.1f}",
                             "exit_vix": f"{today['VIX']:.1f}",
-                            "volume_at_entry": int(pos['entry_vol'] / self.unit_divisor), # 新增：進場顯示量
-                            "volume_at_exit": int(today['Volume'] / self.unit_divisor),   # 出場顯示量
+                            "volume_at_entry": int(pos['entry_vol'] / self.unit_divisor),
+                            "volume_at_exit": int(today['Volume'] / self.unit_divisor),
                             "return": roi,
                             "holding_days": (date - pos['entry_date']).days
                         })
@@ -335,8 +339,42 @@ with st.sidebar:
     
     st.markdown("---")
     st.markdown("### 📅 回測設定")
-    start_date = st.date_input("開始日期", datetime.now() - timedelta(days=365*2))
-    end_date = st.date_input("結束日期", datetime.now())
+    
+    # === 新增：日期快速區間選擇 ===
+    date_ranges = {
+        "自訂日期": (None, None),
+        "近 1 年": (datetime.now() - timedelta(days=365), datetime.now()),
+        "近 3 年": (datetime.now() - timedelta(days=365*3), datetime.now()),
+        "近 5 年": (datetime.now() - timedelta(days=365*5), datetime.now()),
+        "2024 (AI爆發)": (datetime(2024, 1, 1), datetime(2024, 12, 31)),
+        "2023 (盤整復甦)": (datetime(2023, 1, 1), datetime(2023, 12, 31)),
+        "2022 (升息/空頭)": (datetime(2022, 1, 1), datetime(2022, 12, 31)),
+        "2021 (航運/大牛)": (datetime(2021, 1, 1), datetime(2021, 12, 31)),
+        "2020 (疫情V轉)": (datetime(2020, 1, 1), datetime(2020, 12, 31)),
+    }
+
+    # Callback 函數：更新日期
+    def update_dates():
+        selected = st.session_state.preset_selection
+        if selected != "自訂日期":
+            start, end = date_ranges[selected]
+            # 確保結束日期不超過今天
+            if end > datetime.now(): end = datetime.now()
+            st.session_state.start_input = start
+            st.session_state.end_input = end
+
+    # 顯示選單
+    st.selectbox("快速區間", options=list(date_ranges.keys()), key="preset_selection", on_change=update_dates)
+
+    # 初始化 session state 中的日期 (如果沒有的話)
+    if 'start_input' not in st.session_state:
+        st.session_state.start_input = datetime.now() - timedelta(days=365*2)
+    if 'end_input' not in st.session_state:
+        st.session_state.end_input = datetime.now()
+
+    # 日期選擇器 (綁定 key 以便被 selectbox 更新)
+    start_date = st.date_input("開始日期", key="start_input")
+    end_date = st.date_input("結束日期", key="end_input")
     
     run_btn = st.button("🚀 開始執行", type="primary")
 
@@ -376,7 +414,7 @@ if run_btn:
                 display_df.columns = [
                     "進場日期", "出場日期", "進場價格", "出場價格", 
                     "進場VIX", "出場VIX", 
-                    f"進場成交量 ({vol_unit_name})", # 新增欄位
+                    f"進場成交量 ({vol_unit_name})", 
                     f"出場成交量 ({vol_unit_name})", 
                     "報酬率", "持有天數"
                 ]
