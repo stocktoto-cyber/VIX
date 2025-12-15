@@ -73,6 +73,12 @@ class MarketPanicDetector:
         try:
             stock = yf.Ticker(self.ticker)
             self.stock_data = stock.history(period="6mo")
+            
+            # 【關鍵修復】檢查抓回來的資料是不是空的
+            if self.stock_data.empty:
+                st.error(f"❌ 查無【{self.ticker}】的資料。請檢查：\n1. 股票代碼是否正確？(台股需加 .TW 或 .TWO)\n2. 該股票是否已下市？")
+                return False
+
             vix = yf.Ticker("^VIX")
             vix_df = vix.history(period="5d")
             self.vix_data = vix_df['Close'].iloc[-1] if not vix_df.empty else 0
@@ -98,6 +104,9 @@ class MarketPanicDetector:
             self.fng_score = None
 
     def calculate_technicals(self, df):
+        if df is None or df.empty:
+            return df
+            
         cols_to_numeric = ['Close', 'High', 'Low', 'Open', 'Volume']
         for col in cols_to_numeric:
             if col in df.columns:
@@ -125,8 +134,10 @@ class MarketPanicDetector:
         
         try:
             stock_df = yf.download(self.ticker, start=fetch_start, end=end_date, progress=False, threads=False)
+            
+            # 【關鍵修復】回測時也要檢查是否有資料
             if stock_df.empty:
-                msg_box.error(f"❌ 無法下載 {self.ticker}。")
+                msg_box.error(f"❌ 無法下載 {self.ticker} 的歷史資料，請確認代碼正確。")
                 return None, None
             
             if isinstance(stock_df.columns, pd.MultiIndex):
@@ -155,6 +166,10 @@ class MarketPanicDetector:
             start_datetime = pd.to_datetime(start_date)
             df = df[df.index >= start_datetime]
             df = df.dropna()
+            
+            if df.empty:
+                 msg_box.warning("⚠️ 此區間內無交易資料 (可能因扣除計算緩衝期後無剩餘天數)。")
+                 return None, None
 
             trades = []
             positions = []
@@ -215,17 +230,26 @@ class MarketPanicDetector:
             return None, None
 
     def show_live_analysis(self):
-        if self.stock_data is None: return
+        # 【關鍵修復】如果資料是空的 (抓取失敗)，直接結束，不要往下執行
+        if self.stock_data is None or self.stock_data.empty: 
+            return
         
         df = self.calculate_technicals(self.stock_data.copy())
+        
+        # 再次確認計算後是否還有資料
+        if df.empty:
+            st.warning("⚠️ 資料不足以計算技術指標。")
+            return
+
         today = df.iloc[-1]
         date_str = today.name.strftime('%Y-%m-%d')
         
         vol_today_sheets = int(today['Volume'] / 1000)
-        vol_ma_sheets = int(today['Vol_MA20'] / 1000)
+        # 防止均量為 NaN
+        vol_ma_sheets = int(today['Vol_MA20'] / 1000) if pd.notna(today['Vol_MA20']) else 0
         
         target_vol = today['Vol_MA20'] * self.vol_multiplier
-        target_vol_sheets = int(target_vol / 1000)
+        target_vol_sheets = int(target_vol / 1000) if pd.notna(target_vol) else 0
 
         final_fng = self.fng_score if self.fng_score is not None else self.manual_fng
         source_label = "CNN即時" if self.fng_score is not None else "手動輸入"
@@ -251,7 +275,6 @@ class MarketPanicDetector:
         col2.metric("今日成交量", f"{vol_today_sheets:,} 張", delta=f"均量 {vol_ma_sheets:,}")
         
         fng_display = f"{final_fng}" if final_fng is not None else "N/A"
-        # 名稱修改處
         col3.metric(f"恐懼與貪婪指數 ({source_label})", fng_display, delta="<25恐慌 / >60貪婪")
         
         st.markdown("---")
@@ -263,7 +286,6 @@ class MarketPanicDetector:
             st.write(f"1. 布林下緣: {'✅ 符合' if buy_cond_price else '❌ 未跌破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if buy_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX > 20: {'✅ 符合' if buy_cond_vix else '❌ 未達標'} ({self.vix_data:.2f})")
-            # 名稱修改處
             st.write(f"4. 恐懼與貪婪指數 < 25: {'✅ 符合' if buy_cond_fng else '❌ 未達標'}")
 
         with c2:
@@ -272,7 +294,6 @@ class MarketPanicDetector:
             st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
-            # 名稱修改處
             st.write(f"4. 恐懼與貪婪指數 > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
 
 # --- 4. 主程式邏輯 ---
@@ -286,7 +307,6 @@ with st.sidebar:
     vol_multiplier = st.slider("成交量需大於均量的幾倍?", 1.0, 5.0, 2.0, 0.1)
     
     st.markdown("---")
-    # 名稱修改處
     st.markdown("### 😨 恐懼與貪婪指數 (手動備援)")
     st.info("若自動抓取顯示 None，請手動輸入目前指數。")
     manual_fng_input = st.number_input("手動輸入數值", min_value=0, max_value=100, value=50)
