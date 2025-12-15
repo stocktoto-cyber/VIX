@@ -7,29 +7,15 @@ from datetime import datetime, timedelta
 # --- 1. 頁面基礎設定 ---
 st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
 
-# --- 2. CSS 樣式 (UI 強制修復版 - 黑字優化) ---
+# --- 2. CSS 樣式 (UI 修復版) ---
 st.markdown("""
     <style>
-    /* === 1. 全域背景設定 === */
-    .stApp {
-        background-color: #F0F0F3 !important; /* 柔和灰背景 */
-    }
-    
-    /* === 2. 強制所有一般文字為深灰色 (對抗深色模式) === */
-    h1, h2, h3, h4, h5, h6, p, span, div, label, .stMarkdown {
-        color: #333333 !important;
-    }
+    .stApp { background-color: #F0F0F3 !important; }
+    h1, h2, h3, h4, h5, h6, p, span, div, label, .stMarkdown { color: #333333 !important; }
+    section[data-testid="stSidebar"] { background-color: #EAEAED !important; }
+    section[data-testid="stSidebar"] * { color: #333333 !important; }
 
-    /* === 3. 側邊欄設定 === */
-    section[data-testid="stSidebar"] {
-        background-color: #EAEAED !important;
-        box-shadow: inset -5px 0 10px rgba(0,0,0,0.02) !important;
-    }
-    section[data-testid="stSidebar"] * {
-        color: #333333 !important;
-    }
-
-    /* === 4. 關鍵修復：指標卡片 (Metric Card) === */
+    /* 卡片樣式 */
     div[data-testid="stMetric"] {
         background-color: #F0F0F3 !important;
         border: 1px solid #ffffff !important;
@@ -37,19 +23,13 @@ st.markdown("""
         border-radius: 20px !important;
         box-shadow: 6px 6px 12px #c5c5c5, -6px -6px 12px #ffffff !important;
     }
-    
-    /* 鎖定卡片內 "所有" 層級的文字，強制變黑 */
     div[data-testid="stMetric"] label { color: #666666 !important; }
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] { color: #000000 !important; }
-    div[data-testid="stMetricValue"] * {
-        color: #000000 !important;
-    }
-
-    /* 讓漲跌箭頭維持紅綠色 */
+    div[data-testid="stMetricValue"] * { color: #000000 !important; }
     div[data-testid="stMetricDelta"] svg { fill: auto !important; }
     div[data-testid="stMetricDelta"] > div { color: auto !important; }
 
-    /* === 5. 按鈕 (Button) === */
+    /* 按鈕樣式 */
     div[data-testid="stButton"] button {
         background: linear-gradient(145deg, #FFB74D, #FF9800) !important;
         color: white !important;
@@ -57,24 +37,13 @@ st.markdown("""
         border: none !important;
         box-shadow: 5px 5px 10px #d1d1d1, -5px -5px 10px #ffffff !important;
     }
-    div[data-testid="stButton"] button * {
-        color: white !important;
-    }
+    div[data-testid="stButton"] button * { color: white !important; }
 
-    /* === 6. 輸入框與日期選單 === */
+    /* 輸入框樣式 */
     div[data-testid="stTextInput"] input, div[data-testid="stDateInput"] input {
         background-color: #E8E8EB !important;
         color: #000000 !important;
         border-radius: 10px !important;
-    }
-    
-    /* === 7. 分頁籤 (Tabs) === */
-    .stTabs button[aria-selected="true"] {
-        color: #FF9800 !important;
-        border-bottom-color: #FF9800 !important;
-    }
-    .stTabs button {
-        color: #555555 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -86,10 +55,6 @@ class MarketPanicDetector:
         self.stock_data = None
         self.vix_data = None
         self.fng_score = None
-        
-        # 策略參數
-        self.rsi_threshold = 25       
-        self.vix_threshold = 20       
         self.volume_threshold = 7000 * 1000 # 7000張
 
     def fetch_live_data(self):
@@ -118,7 +83,6 @@ class MarketPanicDetector:
             self.fng_score = None
 
     def calculate_technicals(self, df):
-        # 確保資料是數值型態 (避免 yfinance 有時回傳 object)
         cols_to_numeric = ['Close', 'High', 'Low', 'Open', 'Volume']
         for col in cols_to_numeric:
             if col in df.columns:
@@ -128,7 +92,6 @@ class MarketPanicDetector:
         df['STD'] = df['Close'].rolling(window=20).std()
         df['Upper'] = df['MA20'] + (df['STD'] * 2)
         df['Lower'] = df['MA20'] - (df['STD'] * 2)
-        df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
         
         delta = df['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -137,88 +100,72 @@ class MarketPanicDetector:
         df['RSI'] = 100 - (100 / (1 + rs))
         return df
 
-    # --- 功能 B: 回測邏輯 (分開下載 + 穩定合併) ---
     def run_backtest(self, start_date, end_date):
-        st.info(f"📥 正在分開下載個股與 VIX 數據，請稍候...")
+        msg_box = st.empty() # 佔位符，用於動態更新訊息
+        msg_box.info(f"📥 正在分開下載數據 ({start_date} ~ {end_date})...")
         
         try:
-            # 1. 下載台股資料 (threads=False 防止卡死)
+            # 1. 下載台股
             stock_df = yf.download(self.ticker, start=start_date, end=end_date, progress=False, threads=False)
-            
             if stock_df.empty:
-                st.error(f"❌ 無法下載 {self.ticker} 的股價資料，請檢查代碼或日期。")
+                msg_box.error(f"❌ 無法下載 {self.ticker} 的股價資料。")
                 return None, None
             
-            # 處理 MultiIndex (yfinance 新版問題)
+            # 處理 MultiIndex 並強制移除時區 (關鍵修正)
             if isinstance(stock_df.columns, pd.MultiIndex):
-                try:
-                    stock_df.columns = stock_df.columns.get_level_values(0)
-                except:
-                    pass # 如果失敗就保持原樣，通常 get_level_values(0) 能解決 Price 標籤問題
+                stock_df.columns = stock_df.columns.get_level_values(0)
+            if stock_df.index.tz is not None:
+                stock_df.index = stock_df.index.tz_localize(None)
 
-            # 2. 下載 VIX 資料
+            # 2. 下載 VIX
             vix_df = yf.download("^VIX", start=start_date, end=end_date, progress=False, threads=False)
+            vix_series = pd.Series(0, index=stock_df.index)
             
             if not vix_df.empty:
                 if isinstance(vix_df.columns, pd.MultiIndex):
                     vix_df.columns = vix_df.columns.get_level_values(0)
-                # 只取 Close
+                # 強制移除時區 (關鍵修正)
+                if vix_df.index.tz is not None:
+                    vix_df.index = vix_df.index.tz_localize(None)
                 vix_series = vix_df['Close']
-            else:
-                st.warning("⚠️ 無法下載 VIX 數據，將假設 VIX=0 (不啟用恐慌濾網)。")
-                vix_series = pd.Series(0, index=stock_df.index)
 
-            # 3. 合併資料 (關鍵步驟：將 VIX 對齊台股日期)
-            # 使用 reindex 將美股日期對齊到台股日期，缺值用 ffill (前值填充)
+            # 3. 合併資料
             aligned_vix = vix_series.reindex(stock_df.index, method='ffill')
-            
-            # 建立主 DataFrame
             df = stock_df.copy()
-            df['VIX'] = aligned_vix.fillna(0) # 如果還有空值(例如第一天)，補0
+            df['VIX'] = aligned_vix.fillna(0)
 
-            # 計算指標
+            msg_box.info("🔄 正在計算技術指標與策略模擬...")
             df = self.calculate_technicals(df)
-            
-            # 移除前 20 天 (因為 MA20 為 NaN)
-            df = df.dropna()
+            df = df.dropna() # 去除計算指標後的空值
 
             trades = []
             positions = []
             
-            # 診斷用數據
-            max_volume = df['Volume'].max() / 1000 if not df.empty else 0
-            max_vix = df['VIX'].max() if not df.empty else 0
-            
-            # 模擬交易
+            # 診斷用：找出最接近條件的日子
+            df['Vol_Check'] = df['Volume'] > self.volume_threshold
+            df['VIX_Check'] = df['VIX'] > 20
+            df['Price_Check'] = df['Close'] < df['Lower']
+            # 計算每個人符合幾個條件
+            df['Signal_Score'] = df['Vol_Check'].astype(int) + df['VIX_Check'].astype(int) + df['Price_Check'].astype(int)
+
             for i in range(len(df)):
                 today = df.iloc[i]
                 date = df.index[i]
                 
-                # --- 買入條件 ---
-                # 1. 跌破布林下軌
-                # 2. 爆量 > 7000張
-                # 3. VIX > 20
-                is_buy_signal = (today['Close'] < today['Lower']) and \
-                                (today['Volume'] > self.volume_threshold) and \
-                                (today['VIX'] > 20)
+                # 買入條件
+                is_buy_signal = today['Price_Check'] and today['Vol_Check'] and today['VIX_Check']
                 
-                # --- 賣出條件 ---
-                # 1. 突破布林上軌
-                # 2. 爆量 > 7000張
-                # 3. VIX < 20
+                # 賣出條件
                 is_sell_signal = (today['Close'] > today['Upper']) and \
                                  (today['Volume'] > self.volume_threshold) and \
                                  (today['VIX'] < 20)
 
-                # 持續買入 (金字塔建倉)
                 if is_buy_signal:
                     positions.append({
                         "entry_date": date,
                         "entry_price": today['Close'],
                         "entry_vix": today['VIX']
                     })
-                
-                # 全數賣出
                 elif is_sell_signal and len(positions) > 0:
                     for pos in positions:
                         roi = (today['Close'] - pos['entry_price']) / pos['entry_price']
@@ -235,16 +182,13 @@ class MarketPanicDetector:
                         })
                     positions = []
 
-            # 統計診斷資料
-            stats = {
-                "max_vol": max_volume,
-                "max_vix": max_vix,
-                "data_count": len(df)
-            }
-            return pd.DataFrame(trades), stats
+            msg_box.empty() # 清除訊息
+            
+            # 回傳交易紀錄 與 診斷用 DataFrame
+            return pd.DataFrame(trades), df
             
         except Exception as e:
-            st.error(f"❌ 回測發生錯誤: {e}")
+            msg_box.error(f"❌ 回測發生錯誤: {e}")
             return None, None
 
     def show_live_analysis(self):
@@ -320,7 +264,7 @@ if run_btn:
                 detector.show_live_analysis()
     
     with tab2:
-        trades_df, stats = detector.run_backtest(start_date, end_date)
+        trades_df, diagnostic_df = detector.run_backtest(start_date, end_date)
         
         if trades_df is not None:
             if not trades_df.empty:
@@ -340,15 +284,35 @@ if run_btn:
                 st.dataframe(trades_df)
             else:
                 st.warning("⚠️ 此區間內「無符合條件」的交易訊號。")
-                if stats:
-                    st.markdown("### 🕵️‍♂️ 策略診斷報告 (原因分析)")
-                    c1, c2 = st.columns(2)
-                    c1.metric("期間最大成交量", f"{int(stats['max_vol']):,} 張")
-                    if stats['max_vol'] < 7000:
-                        c1.error("❌ 最大量未達 7,000 張")
+                
+                if diagnostic_df is not None and not diagnostic_df.empty:
+                    st.markdown("### 🕵️‍♂️ 策略診斷：最接近買入條件的 3 天")
                     
-                    c2.metric("期間最高 VIX", f"{stats['max_vix']:.2f}")
-                    if stats['max_vix'] < 20:
-                        c2.error("❌ 恐慌指數未達 20")
+                    # 找出分數最高（符合最多條件）的前 3 天
+                    top_candidates = diagnostic_df.nlargest(3, 'Signal_Score')
                     
-                    st.info("💡 建議：此策略條件較嚴苛，請嘗試拉長回測日期（例如 2 年）以包含更多市場波動。")
+                    for date, row in top_candidates.iterrows():
+                        date_str = date.strftime('%Y-%m-%d')
+                        st.markdown(f"**📅 日期：{date_str}**")
+                        
+                        c1, c2, c3 = st.columns(3)
+                        
+                        # 顯示條件狀態
+                        val_vol = int(row['Volume']/1000)
+                        val_vix = row['VIX']
+                        is_vol_ok = row['Vol_Check']
+                        is_vix_ok = row['VIX_Check']
+                        is_price_ok = row['Price_Check']
+                        
+                        c1.metric("1. 價格跌破下軌", f"{'✅ 是' if is_price_ok else '❌ 否'}", 
+                                  delta=f"收 {row['Close']:.2f} / 下 {row['Lower']:.2f}")
+                        
+                        c2.metric("2. 爆量 > 7000張", f"{'✅ 是' if is_vol_ok else '❌ 否'}",
+                                  delta=f"{val_vol:,} 張")
+                        
+                        c3.metric("3. VIX > 20", f"{'✅ 是' if is_vix_ok else '❌ 否'}",
+                                  delta=f"{val_vix:.2f}")
+                        
+                        st.divider()
+                    
+                    st.info("💡 如果看到很多「❌」，代表該條件太嚴苛。建議可嘗試放寬「成交量」或「VIX」門檻。")
