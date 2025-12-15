@@ -199,7 +199,7 @@ class MarketPanicDetector:
             df = df.dropna()
             
             if df.empty:
-                 msg_box.warning("⚠️ 此區間無交易資料。")
+                 msg_box.warning("⚠️ 此區間無交易資料 (可能因扣除計算緩衝期後無剩餘天數，或該ETF尚未上市)。")
                  return None, None
 
             trades = []
@@ -340,7 +340,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📅 回測設定")
     
-    # === 新增：日期快速區間選擇 ===
+    # === 日期快速區間選擇 (更新版) ===
     date_ranges = {
         "自訂日期": (None, None),
         "近 1 年": (datetime.now() - timedelta(days=365), datetime.now()),
@@ -351,6 +351,9 @@ with st.sidebar:
         "2022 (升息/空頭)": (datetime(2022, 1, 1), datetime(2022, 12, 31)),
         "2021 (航運/大牛)": (datetime(2021, 1, 1), datetime(2021, 12, 31)),
         "2020 (疫情V轉)": (datetime(2020, 1, 1), datetime(2020, 12, 31)),
+        "2019 (預防性降息)": (datetime(2019, 1, 1), datetime(2019, 12, 31)),
+        "2018 (美中貿易戰)": (datetime(2018, 1, 1), datetime(2018, 12, 31)),
+        "2008 (金融海嘯)": (datetime(2008, 1, 1), datetime(2008, 12, 31)),
     }
 
     # Callback 函數：更新日期
