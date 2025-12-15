@@ -149,62 +149,92 @@ class MarketPanicDetector:
         df['RSI'] = 100 - (100 / (1 + rs))
         return df
 
-    # --- 功能 B: 回測邏輯 (已修正賣出條件) ---
+    # --- 功能 B: 回測邏輯 (加入 VIX 濾網) ---
     def run_backtest(self, start_date, end_date):
-        st.info(f"正在回測 {self.ticker}，區間: {start_date} ~ {end_date}")
+        st.info(f"正在下載股價與 VIX 歷史數據 ({start_date} ~ {end_date})...")
         
-        # 1. 抓取歷史資料
+        # 1. 同時抓取 個股 與 VIX 歷史資料
         try:
-            df = yf.download(self.ticker, start=start_date, end=end_date, progress=False)
-            if df.empty:
-                st.error("此區間無股價資料")
+            # 下載多檔股票數據
+            data = yf.download([self.ticker, "^VIX"], start=start_date, end=end_date, progress=False)
+            
+            if data.empty:
+                st.error("此區間無資料")
                 return None
             
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
+            # 整理數據 (yfinance 下載多檔時會變 MultiIndex)
+            if isinstance(data.columns, pd.MultiIndex):
+                # 提取個股 Close 和 Volume
+                df = pd.DataFrame()
+                df['Close'] = data['Close'][self.ticker]
+                df['Open'] = data['Open'][self.ticker]
+                df['High'] = data['High'][self.ticker]
+                df['Low'] = data['Low'][self.ticker]
+                df['Volume'] = data['Volume'][self.ticker]
+                
+                # 提取 VIX Close
+                df['VIX'] = data['Close']['^VIX']
+            else:
+                # 萬一只有單檔 (防呆)
+                st.error("數據下載異常，請稍後再試。")
+                return None
+
+            # 補值 (VIX 資料有時會缺漏)
+            df['VIX'] = df['VIX'].fillna(method='ffill')
 
             # 計算指標
             df = self.calculate_technicals(df)
             
             # 2. 模擬交易
             trades = []
-            position = None # 持倉狀態
+            position = None 
             
             for i in range(20, len(df)):
                 today = df.iloc[i]
                 date = df.index[i]
                 
-                # --- 進場條件 (維持不變) ---
-                # 1. RSI < 25 (嚴重超賣)
-                # 2. 收盤價 < 布林下軌 (價格極端)
-                is_panic = (today['RSI'] < self.rsi_threshold) and \
-                           (today['Close'] < today['Lower'])
+                # ---------------------------------------------------
+                # 策略條件設定
+                # ---------------------------------------------------
                 
-                # --- 出場條件 (已修改) ---
-                # 1. 收盤價 > 布林上軌 (High/Close 突破皆可，這裡用收盤較保守)
-                # 2. 成交量 > 10,000 張 (10,000,000 股)
-                is_target_met = (today['Close'] > today['Upper']) and \
-                                (today['Volume'] > 10000000)
+                # [買入條件]
+                # 1. 收盤 < 布林下軌
+                # 2. 成交量 > 7,000 張 (7,000,000 股)
+                # 3. VIX > 20 (市場恐慌)
+                # (註: F&G 因無歷史數據，此處以 VIX 為主)
+                is_buy_signal = (today['Close'] < today['Lower']) and \
+                                (today['Volume'] > 7000000) and \
+                                (today['VIX'] > 20)
+                
+                # [賣出條件]
+                # 1. 收盤 > 布林上軌
+                # 2. 成交量 > 7,000 張
+                # 3. VIX < 20 (市場回穩)
+                is_sell_signal = (today['Close'] > today['Upper']) and \
+                                 (today['Volume'] > 7000000) and \
+                                 (today['VIX'] < 20)
 
                 # 執行交易
-                if position is None and is_panic:
+                if position is None and is_buy_signal:
                     position = {
                         "entry_date": date,
-                        "entry_price": today['Close']
+                        "entry_price": today['Close'],
+                        "entry_vix": today['VIX']
                     }
-                elif position is not None and is_target_met:
-                    # 獲利了結
+                elif position is not None and is_sell_signal:
                     roi = (today['Close'] - position['entry_price']) / position['entry_price']
                     trades.append({
                         "entry_date": position['entry_date'],
                         "exit_date": date,
                         "entry_price": position['entry_price'],
                         "exit_price": today['Close'],
-                        "volume_at_exit": int(today['Volume']/1000), # 紀錄賣出時的量(張)
+                        "entry_vix": f"{position['entry_vix']:.1f}",
+                        "exit_vix": f"{today['VIX']:.1f}",
+                        "volume_at_exit": int(today['Volume']/1000),
                         "return": roi,
                         "holding_days": (date - position['entry_date']).days
                     })
-                    position = None # 清空持倉
+                    position = None
 
             return pd.DataFrame(trades)
             
@@ -220,38 +250,53 @@ class MarketPanicDetector:
         today = df.iloc[-1]
         date_str = today.name.strftime('%Y-%m-%d')
         
-        # 判斷邏輯
-        cond_lower_band = today['Close'] < today['Lower']
-        cond_volume = today['Volume'] > (today['Vol_MA20'] * self.vol_multiplier)
-        cond_rsi = today['RSI'] < self.rsi_threshold
-        cond_vix = self.vix_data > self.vix_threshold
-        cond_fng = self.fng_score < 25 if self.fng_score else False
+        # 單位換算
+        vol_today_sheets = int(today['Volume'] / 1000)
         
-        score = sum([cond_lower_band, cond_volume, cond_rsi, cond_vix, cond_fng])
+        # ---------------------------------------------------
+        # 即時診斷條件 (包含 Fear & Greed)
+        # ---------------------------------------------------
+        
+        # 買入訊號檢核
+        buy_cond_price = today['Close'] < today['Lower']
+        buy_cond_vol = today['Volume'] > 7000000
+        buy_cond_vix = self.vix_data > 20
+        buy_cond_fng = self.fng_score < 25 if self.fng_score else False
+        
+        buy_score = sum([buy_cond_price, buy_cond_vol, buy_cond_vix, buy_cond_fng])
 
+        # 賣出訊號檢核 (僅供參考)
+        sell_cond_price = today['Close'] > today['Upper']
+        sell_cond_vol = today['Volume'] > 7000000
+        sell_cond_vix = self.vix_data < 20
+        sell_cond_fng = self.fng_score > 25 if self.fng_score else False
+
+        # UI 顯示
         st.markdown(f"<h2 style='color:#333333;'>📊 即時恐慌診斷 | {self.ticker}</h2>", unsafe_allow_html=True)
         st.caption(f"📅 資料日期: {date_str}")
         
         col1, col2, col3 = st.columns(3)
         col1.metric("收盤價", f"{today['Close']:.2f}")
-        col2.metric("RSI (14)", f"{today['RSI']:.2f}")
-        col3.metric("總分 (滿分5)", f"{score}", delta="越高越恐慌" if score > 3 else "觀察中")
+        col2.metric("今日成交量", f"{vol_today_sheets:,} 張")
+        col3.metric("符合買入條件", f"{buy_score} / 4")
         
         st.markdown("---")
         
+        # 詳細條件燈號
         c1, c2 = st.columns(2)
         with c1:
-            if score >= 4:
-                st.error("🚨 訊號極強！市場非理性，可留意反彈機會。")
-            elif score >= 3:
-                st.warning("⚠️ 訊號中等，建議觀察是否有下影線。")
-            else:
-                st.info("☕ 目前尚未出現明顯恐慌訊號。")
+            st.subheader("🟢 買入條件檢核")
+            st.write(f"1. 布林下緣: {'✅ 符合' if buy_cond_price else '❌ 未跌破'}")
+            st.write(f"2. 爆量 (>7000張): {'✅ 符合' if buy_cond_vol else '❌ 未達標'}")
+            st.write(f"3. VIX > 20: {'✅ 符合' if buy_cond_vix else '❌ 未達標'} ({self.vix_data:.2f})")
+            st.write(f"4. F&G < 25: {'✅ 符合' if buy_cond_fng else '❌ 未達標'} ({self.fng_score})")
+
         with c2:
-            st.markdown(f"**詳細狀態**")
-            st.text(f"布林下軌: {'跌破 🔴' if cond_lower_band else '安全 🟢'}")
-            st.text(f"爆量程度: {'爆量 🔴' if cond_volume else '正常 🟢'}")
-            st.text(f"VIX指數: {'恐慌 🔴' if cond_vix else '平穩 🟢'}")
+            st.subheader("🔴 賣出條件檢核")
+            st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
+            st.write(f"2. 爆量 (>7000張): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
+            st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
+            st.write(f"4. F&G > 25: {'✅ 符合' if sell_cond_fng else '❌ 極度恐慌中'}")
 
 # --- 4. 主程式邏輯 ---
 
@@ -280,7 +325,7 @@ if run_btn:
     
     # === 分頁 2: 歷史回測 ===
     with tab2:
-        with st.spinner('正在進行歷史回測模擬...'):
+        with st.spinner('下載股價與 VIX 數據並回測中...'):
             trades_df = detector.run_backtest(start_date, end_date)
             
             if trades_df is not None and not trades_df.empty:
@@ -291,7 +336,12 @@ if run_btn:
                 total_return = ((trades_df['return'] + 1).prod() - 1) * 100 
                 
                 st.markdown(f"<h3 style='color:#333333;'>📈 回測報告 ({start_date} ~ {end_date})</h3>", unsafe_allow_html=True)
-                st.info("💡 策略邏輯：\n1. 買入：RSI<25 且 跌破布林下軌。\n2. 賣出：突破布林上軌 且 當日成交量 > 10,000 張。")
+                st.warning("⚠️ 注意：由於無法取得「CNN 貪婪恐慌指數」的歷史數據，回測僅使用 VIX 作為情緒濾網。")
+                st.info("""
+                💡 **策略邏輯**：
+                * **買入**：跌破布林下緣 + 爆量(>7000張) + **VIX > 20** (恐慌)
+                * **賣出**：突破布林上緣 + 爆量(>7000張) + **VIX < 20** (平穩)
+                """)
 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總交易次數", f"{total_trades} 次")
@@ -308,9 +358,10 @@ if run_btn:
                 display_df['exit_date'] = display_df['exit_date'].dt.date
                 display_df['volume_at_exit'] = display_df['volume_at_exit'].apply(lambda x: f"{x:,} 張")
                 
-                display_df.columns = ["進場日期", "出場日期", "進場價", "出場價", "出場時成交量", "報酬率", "持有天數"]
+                display_df.columns = ["進場日期", "出場日期", "進場價", "出場價", "進場VIX", "出場VIX", "出場量", "報酬率", "持有天數"]
                 
                 st.dataframe(display_df, use_container_width=True)
                 
             elif trades_df is not None:
-                st.warning("⚠️ 在此區間內未發現符合策略的交易訊號 (可能是條件太嚴格，例如成交量未達 1 萬張)。")
+                st.warning("⚠️ 在此區間內未發現符合策略的交易訊號。")
+                st.markdown("可能原因：條件非常嚴格 (需同時滿足價格極端、爆大量且VIX配合)。")
