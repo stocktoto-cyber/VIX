@@ -5,83 +5,87 @@ import requests
 from datetime import datetime, timedelta
 
 # --- 1. 頁面基礎設定 ---
-st.set_page_config(page_title="恐慌指標檢測器", page_icon="🚨", layout="wide")
+st.set_page_config(page_title="恐慌指標檢測器 (黑底版)", page_icon="🚨", layout="wide")
 
-# --- 2. CSS 樣式 (UI 終極修復：強制黑字 + 可見度優化) ---
+# --- 2. CSS 樣式 (黑底白字風格) ---
 st.markdown("""
     <style>
-    /* === 1. 全域背景設定 (柔和灰) === */
+    /* === 1. 全域背景設定 (深黑灰) === */
     .stApp {
-        background-color: #F0F0F3 !important;
+        background-color: #0E1117 !important; /* Streamlit 標準深色底 */
+        color: #FFFFFF !important;
     }
     
-    /* === 2. 一般文字顏色 === */
+    /* === 2. 強制所有一般文字為白色 === */
     h1, h2, h3, h4, h5, h6, p, span, div, label, li, .stMarkdown {
-        color: #333333 !important;
+        color: #FAFAFA !important;
     }
 
-    /* === 3. 側邊欄設定 === */
+    /* === 3. 側邊欄設定 (稍淺的黑) === */
     section[data-testid="stSidebar"] {
-        background-color: #EAEAED !important;
+        background-color: #262730 !important;
     }
     section[data-testid="stSidebar"] * {
-        color: #333333 !important;
+        color: #FFFFFF !important;
     }
 
-    /* === 4. 指標卡片 (Metric Card) 樣式 === */
+    /* === 4. 指標卡片 (Metric Card) === */
     div[data-testid="stMetric"] {
-        background-color: #FFFFFF !important; /* 純白背景 */
-        border: 1px solid #E0E0E0 !important;
+        background-color: #1E1E1E !important; /* 卡片深灰底 */
+        border: 1px solid #444444 !important; /* 深灰邊框 */
         padding: 15px !important;
-        border-radius: 15px !important;
-        box-shadow: 4px 4px 10px rgba(0,0,0,0.05) !important;
+        border-radius: 10px !important;
+        box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.5) !important;
     }
     
-    /* 【關鍵修復】暴力強制卡片內所有層級的文字顏色 */
-    div[data-testid="stMetric"] * {
-        color: #000000 !important; /* 預設全黑 */
-    }
-    
-    /* 標題 (Label) 稍微淺一點區分 */
+    /* 標題 (Label) - 淺灰色 */
     div[data-testid="stMetricLabel"] p {
-        color: #555555 !important; 
+        color: #AAAAAA !important; 
         font-weight: bold !important;
     }
     
-    /* 數值 (Value) 純黑加粗 */
+    /* 數值 (Value) - 亮白色 */
     div[data-testid="stMetricValue"] div {
-        color: #000000 !important;
+        color: #FFFFFF !important;
         font-weight: 900 !important;
     }
 
-    /* 讓漲跌箭頭維持紅綠色 (不要被變黑) */
+    /* 讓漲跌箭頭維持紅綠色 */
     div[data-testid="stMetricDelta"] svg { fill: auto !important; }
     div[data-testid="stMetricDelta"] > div { color: auto !important; }
 
     /* === 5. 按鈕 (Button) === */
     div[data-testid="stButton"] button {
-        background: linear-gradient(145deg, #FFB74D, #FF9800) !important;
+        background-color: #FF9800 !important; /* 亮橘色按鈕 */
+        color: white !important;
         border: none !important;
-        border-radius: 30px !important;
-        box-shadow: 3px 3px 6px #d1d1d1 !important;
+        border-radius: 8px !important;
     }
-    /* 按鈕內的文字強制白色 */
+    div[data-testid="stButton"] button:hover {
+        background-color: #F57C00 !important;
+    }
     div[data-testid="stButton"] button p {
         color: white !important;
     }
 
-    /* === 6. 輸入框與日期選單 === */
+    /* === 6. 輸入框與日期選單 (深底白字) === */
     div[data-testid="stTextInput"] input, div[data-testid="stDateInput"] input {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
-        border: 1px solid #CCCCCC !important;
-        border-radius: 10px !important;
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #555555 !important;
+        border-radius: 5px !important;
     }
     
-    /* === 7. 表格樣式優化 === */
+    /* === 7. 表格樣式 (黑底白字) === */
     div[data-testid="stDataFrame"] {
-        background-color: #FFFFFF !important;
-        color: #000000 !important;
+        background-color: #1E1E1E !important;
+    }
+    
+    /* === 8. 狀態提示框 === */
+    div[data-testid="stNotification"] {
+        background-color: #333333 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #555555 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -141,11 +145,11 @@ class MarketPanicDetector:
     def run_backtest(self, start_date, end_date):
         msg_box = st.empty()
         
-        # 【重要修正】自動多抓 60 天資料，確保計算指標時有足夠的歷史數據
+        # 自動多抓 60 天資料作為緩衝
         buffer_days = 60
         fetch_start = start_date - timedelta(days=buffer_days)
         
-        msg_box.info(f"📥 正在下載數據 (含前置運算資料: {fetch_start} ~ {end_date})...")
+        msg_box.info(f"📥 正在下載數據 (緩衝區間: {fetch_start} ~ {end_date})...")
         
         try:
             # 1. 下載台股
@@ -178,15 +182,13 @@ class MarketPanicDetector:
 
             msg_box.info("🔄 正在計算策略...")
             
-            # 先計算指標 (這時候包含前60天的資料，所以指標會準)
+            # 先計算指標
             df = self.calculate_technicals(df)
             
-            # 【重要修正】計算完後，再切分出使用者真正想看的區間
-            # 將 start_date 轉為 datetime 格式進行比較
+            # 切分出使用者真正想看的區間
             start_datetime = pd.to_datetime(start_date)
             df = df[df.index >= start_datetime]
             
-            # 移除計算後仍有空值的資料 (通常這時候已經都有值了)
             df = df.dropna()
 
             trades = []
@@ -352,14 +354,13 @@ if run_btn:
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("符合「跌破下軌」天數", f"{stats['count_price']} 天")
                     
-                    # 避免 NaN 錯誤，先處理 max_vol
-                    display_max_vol = int(stats['max_vol']/1000) if stats['max_vol'] == stats['max_vol'] else 0
+                    # 修正：檢查是否為 NaN 避免錯誤
+                    display_max_vol = int(stats['max_vol']/1000) if pd.notna(stats['max_vol']) else 0
                     c2.metric("符合「爆量7000張」天數", f"{stats['count_vol']} 天", help=f"期間最大量: {display_max_vol:,}張")
                     
-                    # 避免 NaN 錯誤
-                    display_max_vix = stats['max_vix'] if stats['max_vix'] == stats['max_vix'] else 0
+                    display_max_vix = stats['max_vix'] if pd.notna(stats['max_vix']) else 0
                     c3.metric("符合「VIX>20」天數", f"{stats['count_vix']} 天", help=f"期間最高VIX: {display_max_vix:.2f}")
                     
                     c4.metric("🔥 三者同時符合", f"{stats['count_all']} 天")
                     
-                    st.info("💡 這次回測修正了資料讀取邏輯，現在 4 月應該能正確抓到訊號了！")
+                    st.info("💡 如果「三者同時符合」為 0，代表條件太嚴苛。通常是成交量或 VIX 門檻需要放寬。")
