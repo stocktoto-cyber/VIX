@@ -61,9 +61,10 @@ st.markdown("""
 
 # --- 3. 核心類別 ---
 class MarketPanicDetector:
-    def __init__(self, ticker='00675L.TW', vol_multiplier=2.0):
+    def __init__(self, ticker='00675L.TW', vol_multiplier=2.0, manual_fng=50):
         self.ticker = ticker.upper()
         self.vol_multiplier = vol_multiplier
+        self.manual_fng = manual_fng # 手動備援數值
         self.stock_data = None
         self.vix_data = None
         self.fng_score = None
@@ -81,10 +82,14 @@ class MarketPanicDetector:
             return False
 
     def fetch_fear_and_greed(self):
+        # 嘗試從 CNN 抓取
         url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Referer": "https://www.cnn.com/"
+        }
         try:
-            response = requests.get(url, headers=headers, timeout=5)
+            response = requests.get(url, headers=headers, timeout=3)
             if response.status_code == 200:
                 data = response.json()
                 self.fng_score = round(data['fear_and_greed']['score'])
@@ -103,8 +108,6 @@ class MarketPanicDetector:
         df['STD'] = df['Close'].rolling(window=20).std()
         df['Upper'] = df['MA20'] + (df['STD'] * 2)
         df['Lower'] = df['MA20'] - (df['STD'] * 2)
-        
-        # 計算均量
         df['Vol_MA20'] = df['Volume'].rolling(window=20).mean()
         
         delta = df['Close'].diff()
@@ -122,7 +125,6 @@ class MarketPanicDetector:
         msg_box.info(f"📥 正在下載數據 (緩衝區間: {fetch_start} ~ {end_date})...")
         
         try:
-            # 1. 下載台股
             stock_df = yf.download(self.ticker, start=fetch_start, end=end_date, progress=False, threads=False)
             if stock_df.empty:
                 msg_box.error(f"❌ 無法下載 {self.ticker}。")
@@ -133,7 +135,6 @@ class MarketPanicDetector:
             if stock_df.index.tz is not None:
                 stock_df.index = stock_df.index.tz_localize(None)
 
-            # 2. 下載 VIX
             vix_df = yf.download("^VIX", start=fetch_start, end=end_date, progress=False, threads=False)
             vix_series = pd.Series(0, index=stock_df.index)
             
@@ -144,17 +145,14 @@ class MarketPanicDetector:
                     vix_df.index = vix_df.index.tz_localize(None)
                 vix_series = vix_df['Close']
 
-            # 3. 合併資料
             aligned_vix = vix_series.reindex(stock_df.index, method='ffill')
             df = stock_df.copy()
             df['VIX'] = aligned_vix.fillna(0)
 
             msg_box.info("🔄 正在計算策略...")
             
-            # 計算指標
             df = self.calculate_technicals(df)
             
-            # 切分區間
             start_datetime = pd.to_datetime(start_date)
             df = df[df.index >= start_datetime]
             df = df.dropna()
@@ -162,7 +160,6 @@ class MarketPanicDetector:
             trades = []
             positions = []
             
-            # --- 診斷統計 ---
             df['Check_Vol'] = df['Volume'] > (df['Vol_MA20'] * self.vol_multiplier)
             df['Check_Price'] = df['Close'] < df['Lower']
             df['Check_VIX'] = df['VIX'] > 20
@@ -172,11 +169,7 @@ class MarketPanicDetector:
                 today = df.iloc[i]
                 date = df.index[i]
                 
-                # 買入: 跌破布林 + 相對爆量 + VIX>20
                 is_buy = today['Signal_Buy']
-                
-                # 賣出: 突破布林 + 相對爆量 + VIX<20
-                # (回測無歷史 F&G 數據，故此處僅用 VIX 模擬情緒)
                 is_sell = (today['Close'] > today['Upper']) and \
                           today['Check_Vol'] and \
                           (today['VIX'] < 20)
@@ -235,17 +228,21 @@ class MarketPanicDetector:
         target_vol = today['Vol_MA20'] * self.vol_multiplier
         target_vol_sheets = int(target_vol / 1000)
 
+        # === 決定使用哪個 F&G 數值 (自動抓取 vs 手動輸入) ===
+        final_fng = self.fng_score if self.fng_score is not None else self.manual_fng
+        source_label = "CNN即時" if self.fng_score is not None else "手動輸入"
+
         # 買入條件
         buy_cond_price = today['Close'] < today['Lower']
         buy_cond_vol = today['Volume'] > target_vol
         buy_cond_vix = self.vix_data > 20
-        buy_cond_fng = self.fng_score < 25 if self.fng_score else False
+        buy_cond_fng = final_fng < 25 # 使用 final_fng
         
-        # 賣出條件 (F&G 門檻已修正為 > 60)
+        # 賣出條件 (F&G > 60)
         sell_cond_price = today['Close'] > today['Upper']
         sell_cond_vol = today['Volume'] > target_vol
         sell_cond_vix = self.vix_data < 20
-        sell_cond_fng = self.fng_score > 60 if self.fng_score else False # <--- 修改處
+        sell_cond_fng = final_fng > 60 # 使用 final_fng
 
         buy_score = sum([buy_cond_price, buy_cond_vol, buy_cond_vix, buy_cond_fng])
         sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
@@ -256,7 +253,10 @@ class MarketPanicDetector:
         col1, col2, col3 = st.columns(3)
         col1.metric("收盤價", f"{today['Close']:.2f}")
         col2.metric("今日成交量", f"{vol_today_sheets:,} 張", delta=f"均量 {vol_ma_sheets:,}")
-        col3.metric("F&G 指數", f"{self.fng_score}", delta="<25恐慌 / >60貪婪")
+        
+        # F&G 顯示邏輯
+        fng_display = f"{final_fng}" if final_fng is not None else "N/A"
+        col3.metric(f"F&G 指數 ({source_label})", fng_display, delta="<25恐慌 / >60貪婪")
         
         st.markdown("---")
         
@@ -275,7 +275,7 @@ class MarketPanicDetector:
             st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
-            st.write(f"4. F&G > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}") # <--- 介面文字更新
+            st.write(f"4. F&G > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
 
 # --- 4. 主程式邏輯 ---
 
@@ -286,7 +286,11 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 💥 爆量定義")
     vol_multiplier = st.slider("成交量需大於均量的幾倍?", 1.0, 5.0, 2.0, 0.1)
-    st.caption(f"設定 2.0 代表今日成交量必須是過去 20 日平均的 2 倍以上。")
+    
+    st.markdown("---")
+    st.markdown("### 😨 F&G 指數 (手動備援)")
+    st.info("若自動抓取顯示 None，請手動輸入目前指數。")
+    manual_fng_input = st.number_input("手動輸入數值", min_value=0, max_value=100, value=50)
     
     st.markdown("---")
     st.markdown("### 📅 回測設定")
@@ -296,7 +300,7 @@ with st.sidebar:
     run_btn = st.button("🚀 開始執行", type="primary")
 
 if run_btn:
-    detector = MarketPanicDetector(ticker_input, vol_multiplier)
+    detector = MarketPanicDetector(ticker_input, vol_multiplier, manual_fng_input)
     
     tab1, tab2 = st.tabs(["📊 即時診斷", "📈 歷史回測"])
     
