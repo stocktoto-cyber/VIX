@@ -61,8 +61,31 @@ st.markdown("""
 
 # --- 3. 核心類別 ---
 class MarketPanicDetector:
-    def __init__(self, ticker='00675L.TW', vol_multiplier=2.0, manual_fng=50):
-        self.ticker = ticker.upper()
+    def __init__(self, ticker_input='00675L', vol_multiplier=2.0, manual_fng=50):
+        # --- 智慧代碼判斷邏輯 ---
+        ticker_input = str(ticker_input).strip().upper()
+        
+        # 判斷是否為台股 (邏輯：如果代碼包含數字，通常是台股)
+        has_digit = any(char.isdigit() for char in ticker_input)
+        
+        if has_digit:
+            # 這是台股模式
+            self.is_tw_stock = True
+            self.unit_label = "張"
+            self.unit_divisor = 1000
+            
+            # 自動補上 .TW (如果使用者沒打，且也沒打 .TWO)
+            if not (ticker_input.endswith('.TW') or ticker_input.endswith('.TWO')):
+                self.ticker = f"{ticker_input}.TW"
+            else:
+                self.ticker = ticker_input
+        else:
+            # 這是美股模式 (純英文，如 VOO, TSLA)
+            self.is_tw_stock = False
+            self.unit_label = "股"
+            self.unit_divisor = 1 # 美股成交量單位就是股，不除以1000
+            self.ticker = ticker_input
+
         self.vol_multiplier = vol_multiplier
         self.manual_fng = manual_fng
         self.stock_data = None
@@ -74,9 +97,20 @@ class MarketPanicDetector:
             stock = yf.Ticker(self.ticker)
             self.stock_data = stock.history(period="6mo")
             
-            # 【關鍵修復】檢查抓回來的資料是不是空的
+            # --- 自動修正 .TW -> .TWO 機制 ---
+            if self.stock_data.empty and self.is_tw_stock and self.ticker.endswith('.TW'):
+                # 如果 .TW 抓不到，嘗試改用 .TWO (上櫃股票)
+                alt_ticker = self.ticker.replace('.TW', '.TWO')
+                stock = yf.Ticker(alt_ticker)
+                temp_data = stock.history(period="6mo")
+                
+                if not temp_data.empty:
+                    self.ticker = alt_ticker # 更新為正確的代碼
+                    self.stock_data = temp_data
+            
+            # --- 防呆檢查 ---
             if self.stock_data.empty:
-                st.error(f"❌ 查無【{self.ticker}】的資料。請檢查：\n1. 股票代碼是否正確？(台股需加 .TW 或 .TWO)\n2. 該股票是否已下市？")
+                st.error(f"❌ 查無【{self.ticker}】資料。請確認代碼是否正確 (例如是否已下市)。")
                 return False
 
             vix = yf.Ticker("^VIX")
@@ -104,9 +138,8 @@ class MarketPanicDetector:
             self.fng_score = None
 
     def calculate_technicals(self, df):
-        if df is None or df.empty:
-            return df
-            
+        if df is None or df.empty: return df
+        
         cols_to_numeric = ['Close', 'High', 'Low', 'Open', 'Volume']
         for col in cols_to_numeric:
             if col in df.columns:
@@ -130,14 +163,14 @@ class MarketPanicDetector:
         buffer_days = 60
         fetch_start = start_date - timedelta(days=buffer_days)
         
-        msg_box.info(f"📥 正在下載數據 (緩衝區間: {fetch_start} ~ {end_date})...")
+        msg_box.info(f"📥 正在下載數據 ({self.ticker})...")
         
         try:
+            # 1. 下載個股
             stock_df = yf.download(self.ticker, start=fetch_start, end=end_date, progress=False, threads=False)
             
-            # 【關鍵修復】回測時也要檢查是否有資料
             if stock_df.empty:
-                msg_box.error(f"❌ 無法下載 {self.ticker} 的歷史資料，請確認代碼正確。")
+                msg_box.error(f"❌ 無法下載 {self.ticker} 資料。")
                 return None, None
             
             if isinstance(stock_df.columns, pd.MultiIndex):
@@ -145,6 +178,7 @@ class MarketPanicDetector:
             if stock_df.index.tz is not None:
                 stock_df.index = stock_df.index.tz_localize(None)
 
+            # 2. 下載 VIX
             vix_df = yf.download("^VIX", start=fetch_start, end=end_date, progress=False, threads=False)
             vix_series = pd.Series(0, index=stock_df.index)
             
@@ -160,7 +194,6 @@ class MarketPanicDetector:
             df['VIX'] = aligned_vix.fillna(0)
 
             msg_box.info("🔄 正在計算策略...")
-            
             df = self.calculate_technicals(df)
             
             start_datetime = pd.to_datetime(start_date)
@@ -168,7 +201,7 @@ class MarketPanicDetector:
             df = df.dropna()
             
             if df.empty:
-                 msg_box.warning("⚠️ 此區間內無交易資料 (可能因扣除計算緩衝期後無剩餘天數)。")
+                 msg_box.warning("⚠️ 此區間無交易資料 (可能因扣除計算緩衝期後無剩餘天數)。")
                  return None, None
 
             trades = []
@@ -204,7 +237,8 @@ class MarketPanicDetector:
                             "exit_price": today['Close'],
                             "entry_vix": f"{pos['entry_vix']:.1f}",
                             "exit_vix": f"{today['VIX']:.1f}",
-                            "volume_at_exit": int(today['Volume']/1000),
+                            # 根據單位除數調整顯示量
+                            "volume_at_exit": int(today['Volume'] / self.unit_divisor),
                             "return": roi,
                             "holding_days": (date - pos['entry_date']).days
                         })
@@ -230,26 +264,20 @@ class MarketPanicDetector:
             return None, None
 
     def show_live_analysis(self):
-        # 【關鍵修復】如果資料是空的 (抓取失敗)，直接結束，不要往下執行
-        if self.stock_data is None or self.stock_data.empty: 
-            return
+        if self.stock_data is None or self.stock_data.empty: return
         
         df = self.calculate_technicals(self.stock_data.copy())
-        
-        # 再次確認計算後是否還有資料
-        if df.empty:
-            st.warning("⚠️ 資料不足以計算技術指標。")
-            return
+        if df.empty: return
 
         today = df.iloc[-1]
         date_str = today.name.strftime('%Y-%m-%d')
         
-        vol_today_sheets = int(today['Volume'] / 1000)
-        # 防止均量為 NaN
-        vol_ma_sheets = int(today['Vol_MA20'] / 1000) if pd.notna(today['Vol_MA20']) else 0
+        # 動態單位換算
+        vol_today_display = int(today['Volume'] / self.unit_divisor)
+        vol_ma_display = int(today['Vol_MA20'] / self.unit_divisor) if pd.notna(today['Vol_MA20']) else 0
         
         target_vol = today['Vol_MA20'] * self.vol_multiplier
-        target_vol_sheets = int(target_vol / 1000) if pd.notna(target_vol) else 0
+        target_vol_display = int(target_vol / self.unit_divisor) if pd.notna(target_vol) else 0
 
         final_fng = self.fng_score if self.fng_score is not None else self.manual_fng
         source_label = "CNN即時" if self.fng_score is not None else "手動輸入"
@@ -268,11 +296,12 @@ class MarketPanicDetector:
         sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
 
         st.markdown(f"## 📊 即時恐慌診斷 | {self.ticker}")
-        st.caption(f"📅 資料日期: {date_str} | 💥 爆量定義：> {self.vol_multiplier} 倍均量 ({target_vol_sheets:,} 張)")
+        # 標題顯示正確單位
+        st.caption(f"📅 資料日期: {date_str} | 💥 爆量定義：> {self.vol_multiplier} 倍均量 ({target_vol_display:,} {self.unit_label})")
         
         col1, col2, col3 = st.columns(3)
         col1.metric("收盤價", f"{today['Close']:.2f}")
-        col2.metric("今日成交量", f"{vol_today_sheets:,} 張", delta=f"均量 {vol_ma_sheets:,}")
+        col2.metric("今日成交量", f"{vol_today_display:,} {self.unit_label}", delta=f"均量 {vol_ma_display:,}")
         
         fng_display = f"{final_fng}" if final_fng is not None else "N/A"
         col3.metric(f"恐懼與貪婪指數 ({source_label})", fng_display, delta="<25恐慌 / >60貪婪")
@@ -300,7 +329,8 @@ class MarketPanicDetector:
 
 with st.sidebar:
     st.markdown("### ⚙️ 設定面板")
-    ticker_input = st.text_input("股票代碼", value="00675L.TW")
+    # 提示文字更新
+    ticker_input = st.text_input("股票代碼 (台股免加 .TW, 美股直接輸入)", value="00675L")
     
     st.markdown("---")
     st.markdown("### 💥 爆量定義")
@@ -349,9 +379,12 @@ if run_btn:
                 
                 display_df = trades_df.copy()
                 display_df['return'] = display_df['return'].apply(lambda x: f"{x*100:.2f}%")
+                
+                # 動態調整成交量欄位名稱 (顯示 張 或 股)
+                vol_unit_name = detector.unit_label
                 display_df.columns = [
                     "進場日期", "出場日期", "進場價格", "出場價格", 
-                    "進場VIX", "出場VIX", "出場成交量", "報酬率", "持有天數"
+                    "進場VIX", "出場VIX", f"出場成交量 ({vol_unit_name})", "報酬率", "持有天數"
                 ]
                 
                 st.dataframe(display_df)
@@ -365,8 +398,10 @@ if run_btn:
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("符合「跌破下軌」天數", f"{stats['count_price']} 天")
                     
-                    last_vol_str = int(stats['last_vol_ma']/1000)
-                    c2.metric(f"符合「>{vol_multiplier}倍爆量」天數", f"{stats['count_vol']} 天", help=f"近期均量約: {last_vol_str:,}張")
+                    # 診斷區也依據單位調整顯示
+                    last_vol_str = int(stats['last_vol_ma'] / detector.unit_divisor)
+                    c2.metric(f"符合「>{vol_multiplier}倍爆量」天數", f"{stats['count_vol']} 天", 
+                              help=f"近期均量約: {last_vol_str:,} {detector.unit_label}")
                     
                     display_max_vix = stats['max_vix'] if pd.notna(stats['max_vix']) else 0
                     c3.metric("符合「VIX>20」天數", f"{stats['count_vix']} 天", help=f"期間最高VIX: {display_max_vix:.2f}")
