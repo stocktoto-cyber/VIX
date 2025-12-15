@@ -149,7 +149,7 @@ class MarketPanicDetector:
         df['RSI'] = 100 - (100 / (1 + rs))
         return df
 
-    # --- 功能 B: 回測邏輯 ---
+    # --- 功能 B: 回測邏輯 (已修正賣出條件) ---
     def run_backtest(self, start_date, end_date):
         st.info(f"正在回測 {self.ticker}，區間: {start_date} ~ {end_date}")
         
@@ -160,7 +160,6 @@ class MarketPanicDetector:
                 st.error("此區間無股價資料")
                 return None
             
-            # 處理多層索引 (yfinance更新後的問題)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
 
@@ -173,19 +172,19 @@ class MarketPanicDetector:
             
             for i in range(20, len(df)):
                 today = df.iloc[i]
-                prev = df.iloc[i-1]
                 date = df.index[i]
                 
-                # 進場條件 (模擬恐慌買點)
+                # --- 進場條件 (維持不變) ---
                 # 1. RSI < 25 (嚴重超賣)
                 # 2. 收盤價 < 布林下軌 (價格極端)
-                # 3. 爆量 (可選，這裡為了增加訊號數量先不強制，或設寬鬆一點)
-                
                 is_panic = (today['RSI'] < self.rsi_threshold) and \
                            (today['Close'] < today['Lower'])
                 
-                # 出場條件: 均值回歸 (股價站回 MA20)
-                is_rebound = (today['Close'] > today['MA20']) and (prev['Close'] <= prev['MA20'])
+                # --- 出場條件 (已修改) ---
+                # 1. 收盤價 > 布林上軌 (High/Close 突破皆可，這裡用收盤較保守)
+                # 2. 成交量 > 10,000 張 (10,000,000 股)
+                is_target_met = (today['Close'] > today['Upper']) and \
+                                (today['Volume'] > 10000000)
 
                 # 執行交易
                 if position is None and is_panic:
@@ -193,7 +192,7 @@ class MarketPanicDetector:
                         "entry_date": date,
                         "entry_price": today['Close']
                     }
-                elif position is not None and is_rebound:
+                elif position is not None and is_target_met:
                     # 獲利了結
                     roi = (today['Close'] - position['entry_price']) / position['entry_price']
                     trades.append({
@@ -201,6 +200,7 @@ class MarketPanicDetector:
                         "exit_date": date,
                         "entry_price": position['entry_price'],
                         "exit_price": today['Close'],
+                        "volume_at_exit": int(today['Volume']/1000), # 紀錄賣出時的量(張)
                         "return": roi,
                         "holding_days": (date - position['entry_date']).days
                     })
@@ -255,24 +255,20 @@ class MarketPanicDetector:
 
 # --- 4. 主程式邏輯 ---
 
-# 側邊欄設定
 with st.sidebar:
     st.markdown("### ⚙️ 設定面板")
     ticker_input = st.text_input("股票代碼", value="00675L.TW")
     
     st.markdown("---")
     st.markdown("### 📅 回測設定")
-    # 日期區間選擇
-    start_date = st.date_input("開始日期", datetime.now() - timedelta(days=365*2)) # 預設兩年
+    start_date = st.date_input("開始日期", datetime.now() - timedelta(days=365*2))
     end_date = st.date_input("結束日期", datetime.now())
     
     run_btn = st.button("🚀 開始執行", type="primary")
 
-# 執行區
 if run_btn:
     detector = MarketPanicDetector(ticker_input)
     
-    # 建立分頁
     tab1, tab2 = st.tabs(["📊 即時診斷", "📈 歷史回測"])
     
     # === 分頁 1: 即時診斷 ===
@@ -288,35 +284,33 @@ if run_btn:
             trades_df = detector.run_backtest(start_date, end_date)
             
             if trades_df is not None and not trades_df.empty:
-                # 計算績效
                 total_trades = len(trades_df)
                 win_trades = len(trades_df[trades_df['return'] > 0])
                 win_rate = (win_trades / total_trades) * 100
                 avg_return = trades_df['return'].mean() * 100
-                total_return = ((trades_df['return'] + 1).prod() - 1) * 100 # 複利計算
+                total_return = ((trades_df['return'] + 1).prod() - 1) * 100 
                 
                 st.markdown(f"<h3 style='color:#333333;'>📈 回測報告 ({start_date} ~ {end_date})</h3>", unsafe_allow_html=True)
-                st.info("💡 策略邏輯：當 RSI<25 且 跌破布林下軌時買入，股價站回月線(20MA)時賣出。")
+                st.info("💡 策略邏輯：\n1. 買入：RSI<25 且 跌破布林下軌。\n2. 賣出：突破布林上軌 且 當日成交量 > 10,000 張。")
 
-                # 顯示績效卡片
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總交易次數", f"{total_trades} 次")
                 m2.metric("勝率", f"{win_rate:.1f}%")
-                m3.metric("平均單次報酬", f"{avg_return:.2f}%", delta_color="normal")
+                m3.metric("平均單次報酬", f"{avg_return:.2f}%")
                 m4.metric("總累積報酬", f"{total_return:.2f}%", delta=f"{total_return:.2f}%")
                 
                 st.markdown("---")
                 
-                # 交易明細
                 st.subheader("📝 交易明細表")
-                # 格式化顯示
                 display_df = trades_df.copy()
                 display_df['return'] = display_df['return'].apply(lambda x: f"{x*100:.2f}%")
                 display_df['entry_date'] = display_df['entry_date'].dt.date
                 display_df['exit_date'] = display_df['exit_date'].dt.date
-                display_df.columns = ["進場日期", "出場日期", "進場價", "出場價", "報酬率", "持有天數"]
+                display_df['volume_at_exit'] = display_df['volume_at_exit'].apply(lambda x: f"{x:,} 張")
+                
+                display_df.columns = ["進場日期", "出場日期", "進場價", "出場價", "出場時成交量", "報酬率", "持有天數"]
                 
                 st.dataframe(display_df, use_container_width=True)
                 
             elif trades_df is not None:
-                st.warning("⚠️ 在此區間內未發現符合策略的交易訊號 (可能是條件太嚴格或市場處於多頭)。")
+                st.warning("⚠️ 在此區間內未發現符合策略的交易訊號 (可能是條件太嚴格，例如成交量未達 1 萬張)。")
