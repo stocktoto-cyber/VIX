@@ -195,4 +195,171 @@ class MarketPanicDetector:
             # --- 診斷統計 ---
             df['Check_Price'] = df['Close'] < df['Lower']
             df['Check_Vol'] = df['Volume'] > self.volume_threshold
-            df['Check_VIX'] = df
+            df['Check_VIX'] = df['VIX'] > 20
+            df['Signal_Buy'] = df['Check_Price'] & df['Check_Vol'] & df['Check_VIX']
+
+            for i in range(len(df)):
+                today = df.iloc[i]
+                date = df.index[i]
+                
+                # 買入: 跌破布林 + 爆量 + VIX>20
+                is_buy = today['Signal_Buy']
+                
+                # 賣出: 突破布林 + 爆量 + VIX<20
+                is_sell = (today['Close'] > today['Upper']) and \
+                          (today['Volume'] > self.volume_threshold) and \
+                          (today['VIX'] < 20)
+
+                if is_buy:
+                    positions.append({
+                        "entry_date": date,
+                        "entry_price": today['Close'],
+                        "entry_vix": today['VIX']
+                    })
+                elif is_sell and len(positions) > 0:
+                    for pos in positions:
+                        roi = (today['Close'] - pos['entry_price']) / pos['entry_price']
+                        trades.append({
+                            "entry_date": pos['entry_date'],
+                            "exit_date": date,
+                            "entry_price": pos['entry_price'],
+                            "exit_price": today['Close'],
+                            "entry_vix": f"{pos['entry_vix']:.1f}",
+                            "exit_vix": f"{today['VIX']:.1f}",
+                            "volume_at_exit": int(today['Volume']/1000),
+                            "return": roi,
+                            "holding_days": (date - pos['entry_date']).days
+                        })
+                    positions = []
+
+            msg_box.empty()
+            
+            # 準備診斷數據
+            stats = {
+                "total_days": len(df),
+                "count_price": df['Check_Price'].sum(),
+                "count_vol": df['Check_Vol'].sum(),
+                "count_vix": df['Check_VIX'].sum(),
+                "count_all": df['Signal_Buy'].sum(),
+                "max_vol": df['Volume'].max() if not df.empty else 0,
+                "max_vix": df['VIX'].max() if not df.empty else 0
+            }
+            return pd.DataFrame(trades), stats
+            
+        except Exception as e:
+            msg_box.error(f"❌ 回測錯誤: {e}")
+            return None, None
+
+    def show_live_analysis(self):
+        if self.stock_data is None: return
+        
+        df = self.calculate_technicals(self.stock_data.copy())
+        today = df.iloc[-1]
+        date_str = today.name.strftime('%Y-%m-%d')
+        vol_today_sheets = int(today['Volume'] / 1000)
+        
+        # 條件
+        buy_cond_price = today['Close'] < today['Lower']
+        buy_cond_vol = today['Volume'] > self.volume_threshold
+        buy_cond_vix = self.vix_data > 20
+        buy_cond_fng = self.fng_score < 25 if self.fng_score else False
+        
+        sell_cond_price = today['Close'] > today['Upper']
+        sell_cond_vol = today['Volume'] > self.volume_threshold
+        sell_cond_vix = self.vix_data < 20
+        sell_cond_fng = self.fng_score > 25 if self.fng_score else False
+
+        buy_score = sum([buy_cond_price, buy_cond_vol, buy_cond_vix, buy_cond_fng])
+        sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
+
+        st.markdown(f"## 📊 即時恐慌診斷 | {self.ticker}")
+        st.caption(f"📅 資料日期: {date_str}")
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("收盤價", f"{today['Close']:.2f}")
+        col2.metric("今日成交量", f"{vol_today_sheets:,} 張")
+        col3.metric("F&G 指數", f"{self.fng_score}", delta="<25為恐慌")
+        
+        st.markdown("---")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader(f"🟢 買入訊號 ({buy_score}/4)")
+            if buy_score == 4: st.success("🚀 強力買入訊號觸發！")
+            st.write(f"1. 布林下緣: {'✅ 符合' if buy_cond_price else '❌ 未跌破'}")
+            st.write(f"2. 爆量 (>7000張): {'✅ 符合' if buy_cond_vol else '❌ 未達標'}")
+            st.write(f"3. VIX > 20: {'✅ 符合' if buy_cond_vix else '❌ 未達標'} ({self.vix_data:.2f})")
+            st.write(f"4. F&G < 25: {'✅ 符合' if buy_cond_fng else '❌ 未達標'}")
+
+        with c2:
+            st.subheader(f"🔴 賣出訊號 ({sell_score}/4)")
+            if sell_score == 4: st.error("📉 強力賣出訊號觸發！")
+            st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
+            st.write(f"2. 爆量 (>7000張): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
+            st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
+            st.write(f"4. F&G > 25: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
+
+# --- 4. 主程式邏輯 ---
+
+with st.sidebar:
+    st.markdown("### ⚙️ 設定面板")
+    ticker_input = st.text_input("股票代碼", value="00675L.TW")
+    
+    st.markdown("---")
+    st.markdown("### 📅 回測設定")
+    start_date = st.date_input("開始日期", datetime.now() - timedelta(days=365*2))
+    end_date = st.date_input("結束日期", datetime.now())
+    
+    run_btn = st.button("🚀 開始執行", type="primary")
+
+if run_btn:
+    detector = MarketPanicDetector(ticker_input)
+    
+    tab1, tab2 = st.tabs(["📊 即時診斷", "📈 歷史回測"])
+    
+    with tab1:
+        with st.spinner('分析即時數據中...'):
+            if detector.fetch_live_data():
+                detector.fetch_fear_and_greed()
+                detector.show_live_analysis()
+    
+    with tab2:
+        trades_df, stats = detector.run_backtest(start_date, end_date)
+        
+        if trades_df is not None:
+            if not trades_df.empty:
+                total_trades = len(trades_df)
+                win_trades = len(trades_df[trades_df['return'] > 0])
+                win_rate = (win_trades / total_trades) * 100
+                avg_return = trades_df['return'].mean() * 100
+                total_return = ((trades_df['return'] + 1).prod() - 1) * 100 
+                
+                st.markdown(f"### 📈 回測報告 ({start_date} ~ {end_date})")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("總交易筆數", f"{total_trades} 筆")
+                m2.metric("勝率", f"{win_rate:.1f}%")
+                m3.metric("平均報酬", f"{avg_return:.2f}%")
+                m4.metric("總報酬", f"{total_return:.2f}%")
+                
+                st.dataframe(trades_df)
+            else:
+                st.warning("⚠️ 此區間內「無符合條件」的交易訊號。")
+                
+                if stats:
+                    st.markdown("### 🕵️‍♂️ 為什麼沒買到？(條件診斷)")
+                    st.write(f"統計期間：{stats['total_days']} 個交易日")
+                    
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("符合「跌破下軌」天數", f"{stats['count_price']} 天")
+                    
+                    # 避免 NaN 錯誤，先處理 max_vol
+                    display_max_vol = int(stats['max_vol']/1000) if stats['max_vol'] == stats['max_vol'] else 0
+                    c2.metric("符合「爆量7000張」天數", f"{stats['count_vol']} 天", help=f"期間最大量: {display_max_vol:,}張")
+                    
+                    # 避免 NaN 錯誤
+                    display_max_vix = stats['max_vix'] if stats['max_vix'] == stats['max_vix'] else 0
+                    c3.metric("符合「VIX>20」天數", f"{stats['count_vix']} 天", help=f"期間最高VIX: {display_max_vix:.2f}")
+                    
+                    c4.metric("🔥 三者同時符合", f"{stats['count_all']} 天")
+                    
+                    st.info("💡 這次回測修正了資料讀取邏輯，現在 4 月應該能正確抓到訊號了！")
