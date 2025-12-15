@@ -65,25 +65,23 @@ class MarketPanicDetector:
         # --- 智慧代碼判斷邏輯 ---
         ticker_input = str(ticker_input).strip().upper()
         
-        # 判斷是否為台股 (邏輯：如果代碼包含數字，通常是台股)
         has_digit = any(char.isdigit() for char in ticker_input)
         
         if has_digit:
-            # 這是台股模式
+            # 台股模式
             self.is_tw_stock = True
             self.unit_label = "張"
             self.unit_divisor = 1000
             
-            # 自動補上 .TW (如果使用者沒打，且也沒打 .TWO)
             if not (ticker_input.endswith('.TW') or ticker_input.endswith('.TWO')):
                 self.ticker = f"{ticker_input}.TW"
             else:
                 self.ticker = ticker_input
         else:
-            # 這是美股模式 (純英文，如 VOO, TSLA)
+            # 美股模式
             self.is_tw_stock = False
             self.unit_label = "股"
-            self.unit_divisor = 1 # 美股成交量單位就是股，不除以1000
+            self.unit_divisor = 1
             self.ticker = ticker_input
 
         self.vol_multiplier = vol_multiplier
@@ -97,18 +95,16 @@ class MarketPanicDetector:
             stock = yf.Ticker(self.ticker)
             self.stock_data = stock.history(period="6mo")
             
-            # --- 自動修正 .TW -> .TWO 機制 ---
+            # 自動修正 .TW -> .TWO
             if self.stock_data.empty and self.is_tw_stock and self.ticker.endswith('.TW'):
-                # 如果 .TW 抓不到，嘗試改用 .TWO (上櫃股票)
                 alt_ticker = self.ticker.replace('.TW', '.TWO')
                 stock = yf.Ticker(alt_ticker)
                 temp_data = stock.history(period="6mo")
                 
                 if not temp_data.empty:
-                    self.ticker = alt_ticker # 更新為正確的代碼
+                    self.ticker = alt_ticker
                     self.stock_data = temp_data
             
-            # --- 防呆檢查 ---
             if self.stock_data.empty:
                 st.error(f"❌ 查無【{self.ticker}】資料。請確認代碼是否正確 (例如是否已下市)。")
                 return False
@@ -166,7 +162,6 @@ class MarketPanicDetector:
         msg_box.info(f"📥 正在下載數據 ({self.ticker})...")
         
         try:
-            # 1. 下載個股
             stock_df = yf.download(self.ticker, start=fetch_start, end=end_date, progress=False, threads=False)
             
             if stock_df.empty:
@@ -178,7 +173,6 @@ class MarketPanicDetector:
             if stock_df.index.tz is not None:
                 stock_df.index = stock_df.index.tz_localize(None)
 
-            # 2. 下載 VIX
             vix_df = yf.download("^VIX", start=fetch_start, end=end_date, progress=False, threads=False)
             vix_series = pd.Series(0, index=stock_df.index)
             
@@ -201,7 +195,7 @@ class MarketPanicDetector:
             df = df.dropna()
             
             if df.empty:
-                 msg_box.warning("⚠️ 此區間無交易資料 (可能因扣除計算緩衝期後無剩餘天數)。")
+                 msg_box.warning("⚠️ 此區間無交易資料。")
                  return None, None
 
             trades = []
@@ -225,7 +219,8 @@ class MarketPanicDetector:
                     positions.append({
                         "entry_date": date,
                         "entry_price": today['Close'],
-                        "entry_vix": today['VIX']
+                        "entry_vix": today['VIX'],
+                        "entry_vol": today['Volume'] # 紀錄進場量
                     })
                 elif is_sell and len(positions) > 0:
                     for pos in positions:
@@ -237,8 +232,8 @@ class MarketPanicDetector:
                             "exit_price": today['Close'],
                             "entry_vix": f"{pos['entry_vix']:.1f}",
                             "exit_vix": f"{today['VIX']:.1f}",
-                            # 根據單位除數調整顯示量
-                            "volume_at_exit": int(today['Volume'] / self.unit_divisor),
+                            "volume_at_entry": int(pos['entry_vol'] / self.unit_divisor), # 新增：進場顯示量
+                            "volume_at_exit": int(today['Volume'] / self.unit_divisor),   # 出場顯示量
                             "return": roi,
                             "holding_days": (date - pos['entry_date']).days
                         })
@@ -272,7 +267,6 @@ class MarketPanicDetector:
         today = df.iloc[-1]
         date_str = today.name.strftime('%Y-%m-%d')
         
-        # 動態單位換算
         vol_today_display = int(today['Volume'] / self.unit_divisor)
         vol_ma_display = int(today['Vol_MA20'] / self.unit_divisor) if pd.notna(today['Vol_MA20']) else 0
         
@@ -296,7 +290,6 @@ class MarketPanicDetector:
         sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
 
         st.markdown(f"## 📊 即時恐慌診斷 | {self.ticker}")
-        # 標題顯示正確單位
         st.caption(f"📅 資料日期: {date_str} | 💥 爆量定義：> {self.vol_multiplier} 倍均量 ({target_vol_display:,} {self.unit_label})")
         
         col1, col2, col3 = st.columns(3)
@@ -329,7 +322,6 @@ class MarketPanicDetector:
 
 with st.sidebar:
     st.markdown("### ⚙️ 設定面板")
-    # 提示文字更新
     ticker_input = st.text_input("股票代碼 (台股免加 .TW, 美股直接輸入)", value="00675L")
     
     st.markdown("---")
@@ -380,11 +372,13 @@ if run_btn:
                 display_df = trades_df.copy()
                 display_df['return'] = display_df['return'].apply(lambda x: f"{x*100:.2f}%")
                 
-                # 動態調整成交量欄位名稱 (顯示 張 或 股)
                 vol_unit_name = detector.unit_label
                 display_df.columns = [
                     "進場日期", "出場日期", "進場價格", "出場價格", 
-                    "進場VIX", "出場VIX", f"出場成交量 ({vol_unit_name})", "報酬率", "持有天數"
+                    "進場VIX", "出場VIX", 
+                    f"進場成交量 ({vol_unit_name})", # 新增欄位
+                    f"出場成交量 ({vol_unit_name})", 
+                    "報酬率", "持有天數"
                 ]
                 
                 st.dataframe(display_df)
@@ -398,7 +392,6 @@ if run_btn:
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("符合「跌破下軌」天數", f"{stats['count_price']} 天")
                     
-                    # 診斷區也依據單位調整顯示
                     last_vol_str = int(stats['last_vol_ma'] / detector.unit_divisor)
                     c2.metric(f"符合「>{vol_multiplier}倍爆量」天數", f"{stats['count_vol']} 天", 
                               help=f"近期均量約: {last_vol_str:,} {detector.unit_label}")
