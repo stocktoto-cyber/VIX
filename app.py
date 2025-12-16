@@ -199,7 +199,7 @@ class MarketPanicDetector:
             df = df.dropna()
             
             if df.empty:
-                 msg_box.warning("⚠️ 此區間無交易資料 (可能因扣除計算緩衝期後無剩餘天數，或該ETF尚未上市)。")
+                 msg_box.warning("⚠️ 此區間無交易資料。")
                  return None, None
 
             trades = []
@@ -280,15 +280,17 @@ class MarketPanicDetector:
         final_fng = self.fng_score if self.fng_score is not None else self.manual_fng
         source_label = "CNN即時" if self.fng_score is not None else "手動輸入"
 
+        # 買入條件 (F&G < 25, 恐慌)
         buy_cond_price = today['Close'] < today['Lower']
         buy_cond_vol = today['Volume'] > target_vol
         buy_cond_vix = self.vix_data > 20
         buy_cond_fng = final_fng < 25
         
+        # 賣出條件 (F&G > 75, 極度貪婪)
         sell_cond_price = today['Close'] > today['Upper']
         sell_cond_vol = today['Volume'] > target_vol
         sell_cond_vix = self.vix_data < 20
-        sell_cond_fng = final_fng > 60
+        sell_cond_fng = final_fng > 75 # <--- 修改處：調整為 > 75
 
         buy_score = sum([buy_cond_price, buy_cond_vol, buy_cond_vix, buy_cond_fng])
         sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
@@ -301,7 +303,8 @@ class MarketPanicDetector:
         col2.metric("今日成交量", f"{vol_today_display:,} {self.unit_label}", delta=f"均量 {vol_ma_display:,}")
         
         fng_display = f"{final_fng}" if final_fng is not None else "N/A"
-        col3.metric(f"恐懼與貪婪指數 ({source_label})", fng_display, delta="<25恐慌 / >60貪婪")
+        # 更新文字描述
+        col3.metric(f"恐懼與貪婪指數 ({source_label})", fng_display, delta="<25恐慌 / >75極貪婪")
         
         st.markdown("---")
         
@@ -320,7 +323,8 @@ class MarketPanicDetector:
             st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
-            st.write(f"4. 恐懼與貪婪指數 > 60: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
+            # 更新顯示條件
+            st.write(f"4. 恐懼與貪婪指數 > 75: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
 
 # --- 4. 主程式邏輯 ---
 
@@ -340,7 +344,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📅 回測設定")
     
-    # === 日期快速區間選擇 (更新版) ===
+    # === 日期快速區間選擇 (含歷史事件) ===
     date_ranges = {
         "自訂日期": (None, None),
         "近 1 年": (datetime.now() - timedelta(days=365), datetime.now()),
@@ -356,26 +360,22 @@ with st.sidebar:
         "2008 (金融海嘯)": (datetime(2008, 1, 1), datetime(2008, 12, 31)),
     }
 
-    # Callback 函數：更新日期
+    # Callback 函數
     def update_dates():
         selected = st.session_state.preset_selection
         if selected != "自訂日期":
             start, end = date_ranges[selected]
-            # 確保結束日期不超過今天
             if end > datetime.now(): end = datetime.now()
             st.session_state.start_input = start
             st.session_state.end_input = end
 
-    # 顯示選單
     st.selectbox("快速區間", options=list(date_ranges.keys()), key="preset_selection", on_change=update_dates)
 
-    # 初始化 session state 中的日期 (如果沒有的話)
     if 'start_input' not in st.session_state:
         st.session_state.start_input = datetime.now() - timedelta(days=365*2)
     if 'end_input' not in st.session_state:
         st.session_state.end_input = datetime.now()
 
-    # 日期選擇器 (綁定 key 以便被 selectbox 更新)
     start_date = st.date_input("開始日期", key="start_input")
     end_date = st.date_input("結束日期", key="end_input")
     
