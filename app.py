@@ -280,15 +280,17 @@ class MarketPanicDetector:
         final_fng = self.fng_score if self.fng_score is not None else self.manual_fng
         source_label = "CNN即時" if self.fng_score is not None else "手動輸入"
 
+        # 買入條件 (F&G < 25, 恐慌)
         buy_cond_price = today['Close'] < today['Lower']
         buy_cond_vol = today['Volume'] > target_vol
         buy_cond_vix = self.vix_data > 20
         buy_cond_fng = final_fng < 25
         
+        # 賣出條件 (F&G > 75, 極度貪婪)
         sell_cond_price = today['Close'] > today['Upper']
         sell_cond_vol = today['Volume'] > target_vol
         sell_cond_vix = self.vix_data < 20
-        sell_cond_fng = final_fng > 75
+        sell_cond_fng = final_fng > 75 # <--- 修改處：調整為 > 75
 
         buy_score = sum([buy_cond_price, buy_cond_vol, buy_cond_vix, buy_cond_fng])
         sell_score = sum([sell_cond_price, sell_cond_vol, sell_cond_vix, sell_cond_fng])
@@ -301,6 +303,7 @@ class MarketPanicDetector:
         col2.metric("今日成交量", f"{vol_today_display:,} {self.unit_label}", delta=f"均量 {vol_ma_display:,}")
         
         fng_display = f"{final_fng}" if final_fng is not None else "N/A"
+        # 更新文字描述
         col3.metric(f"恐懼與貪婪指數 ({source_label})", fng_display, delta="<25恐慌 / >75極貪婪")
         
         st.markdown("---")
@@ -320,6 +323,7 @@ class MarketPanicDetector:
             st.write(f"1. 布林上緣: {'✅ 符合' if sell_cond_price else '❌ 未突破'}")
             st.write(f"2. 爆量 (>{self.vol_multiplier}倍): {'✅ 符合' if sell_cond_vol else '❌ 未達標'}")
             st.write(f"3. VIX < 20: {'✅ 符合' if sell_cond_vix else '❌ 未達標'}")
+            # 更新顯示條件
             st.write(f"4. 恐懼與貪婪指數 > 75: {'✅ 符合' if sell_cond_fng else '❌ 未達標'}")
 
 # --- 4. 主程式邏輯 ---
@@ -340,7 +344,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📅 回測設定")
     
-    # === 日期快速區間選擇 ===
+    # === 日期快速區間選擇 (含歷史事件) ===
     date_ranges = {
         "自訂日期": (None, None),
         "近 1 年": (datetime.now() - timedelta(days=365), datetime.now()),
@@ -400,10 +404,6 @@ if run_btn:
                 total_return = ((trades_df['return'] + 1).prod() - 1) * 100 
                 
                 st.markdown(f"### 📈 回測報告 ({start_date} ~ {end_date})")
-                
-                # 增加備註
-                st.caption("ℹ️ 註：回測表中的恐慌指數使用 VIX 歷史數據呈現，因 F&G 指數無公開歷史資料。")
-
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("總交易筆數", f"{total_trades} 筆")
                 m2.metric("勝率", f"{win_rate:.1f}%")
@@ -414,11 +414,9 @@ if run_btn:
                 display_df['return'] = display_df['return'].apply(lambda x: f"{x*100:.2f}%")
                 
                 vol_unit_name = detector.unit_label
-                
-                # 修改欄位名稱
                 display_df.columns = [
                     "進場日期", "出場日期", "進場價格", "出場價格", 
-                    "進場恐慌指數 (VIX)", "出場恐慌指數 (VIX)", 
+                    "進場VIX", "出場VIX", 
                     f"進場成交量 ({vol_unit_name})", 
                     f"出場成交量 ({vol_unit_name})", 
                     "報酬率", "持有天數"
